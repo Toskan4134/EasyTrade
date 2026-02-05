@@ -1,14 +1,14 @@
 {
-    "Group": "Example",
-    "Name": "ExamplePlugin",
-    "Version": "0.0.2",
-    "Description": "An example plugin for HyTale!",
+    "Group": "Toskan4134",
+    "Name": "HyTrade",
+    "Version": "1.0.0",
+    "Description": "Player-to-player trading system with atomic transactions and secure item exchange",
     "Authors": [
         {
-            "Name": "It's you!"
+            "Name": "Toskan4134"
         }
     ],
-    "Website": "example.org",
+    "Website": "https://toskan4134.github.io",
     "ServerVersion": "*",
     "Dependencies": {
         
@@ -17,6 +17,6 @@
         
     },
     "DisabledByDefault": false,
-    "Main": "org.example.plugin.ExamplePlugin",
+    "Main": "org.toskan4134.hytrade.TradingPlugin",
     "IncludesAssetPack": true
 }

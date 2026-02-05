@@ -1,0 +1,46 @@
+$C = "../Common.ui";
+
+Group {
+  Anchor: (Width: 80, Height: 72);
+  LayoutMode: Top;
+
+  Group {
+    Anchor: (Height: 68);
+    LayoutMode: Center;
+
+    ItemSlotButton #SlotContainer {
+      Anchor: (Width: 64, Height: 64);
+      Padding: 2;
+      Style: (
+        Default: (
+          Background: #252f3a,
+        ),
+        Hovered: (
+          Background: #6697c9,
+        ),
+        Pressed: (
+          Background: #6697c9,
+        ),
+        Disabled: (
+          Background: #1a1e24,
+        ),
+        Sounds: $C.@ButtonSounds,
+      );
+      ItemSlot #SlotItem {
+        Anchor: (Full: 0);
+        ShowQualityBackground: true;
+      }
+
+      Label #SlotQty {
+        Anchor: (Right: 6, Bottom: 4);
+        Style: (
+          FontSize: 12,
+          TextColor: #ffffff,
+          HorizontalAlignment: End,
+          VerticalAlignment: End,
+          RenderBold: true,
+        );
+      }
+    }
+  }
+}

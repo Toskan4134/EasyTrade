@@ -1,0 +1,74 @@
+$C = "../Common.ui";
+
+@SmallButtonStyle = TextButtonStyle(
+  Default: (Background: PatchStyle(TexturePath: "../Common/Buttons/Secondary.png", Border: $C.@ButtonBorder), LabelStyle: LabelStyle(FontSize: 12, TextColor: #bfcdd5, RenderBold: true, HorizontalAlignment: Center, VerticalAlignment: Center)),
+  Hovered: (Background: PatchStyle(TexturePath: "../Common/Buttons/Secondary_Hovered.png", Border: $C.@ButtonBorder), LabelStyle: LabelStyle(FontSize: 12, TextColor: #ffffff, RenderBold: true, HorizontalAlignment: Center, VerticalAlignment: Center)),
+  Pressed: (Background: PatchStyle(TexturePath: "../Common/Buttons/Secondary_Pressed.png", Border: $C.@ButtonBorder), LabelStyle: LabelStyle(FontSize: 12, TextColor: #8fa8b8, RenderBold: true, HorizontalAlignment: Center, VerticalAlignment: Center)),
+  Disabled: (Background: PatchStyle(TexturePath: "../Common/Buttons/Disabled.png", Border: $C.@ButtonBorder), LabelStyle: LabelStyle(FontSize: 12, TextColor: #666666, RenderBold: true, HorizontalAlignment: Center, VerticalAlignment: Center)),
+  Sounds: $C.@ButtonSounds,
+
+);
+
+Group {
+  Anchor: (Width: 110, Height: 110);
+  LayoutMode: Top;
+
+  Group {
+    Anchor: (Height: 68);
+    LayoutMode: Center;
+
+    ItemSlotButton #SlotButton {
+      Anchor: (Width: 64, Height: 64);
+      Padding: 2;
+      Style: (
+        Default: (
+          Background: #252f3a,
+        ),
+        Hovered: (
+          Background: #6697c9,
+        ),
+        Pressed: (
+          Background: #6697c9,
+        ),
+        Disabled: (
+          Background: #1a1e24,
+        ),
+        Sounds: $C.@ButtonSounds,
+      );
+      ItemSlot #SlotItem {
+        Anchor: (Full: 0);
+        ShowQualityBackground: true;
+      }
+
+      Label #SlotQty {
+        Anchor: (Right: 6, Bottom: 4);
+        Style: (
+          FontSize: 12,
+          TextColor: #ffffff,
+          HorizontalAlignment: End,
+          VerticalAlignment: End,
+          RenderBold: true,
+        );
+      }
+    }
+
+  }
+
+  Group {
+    Anchor: (Height: 38);
+    LayoutMode: Center;
+    Padding: (Top: 4);
+
+    TextButton #SlotQty1 {
+      Text: "+1";
+      Anchor: (Width: 48, Height: 32);
+      Style: @SmallButtonStyle;
+    }
+
+    TextButton #SlotQty10 {
+      Text: "+10";
+      Anchor: (Width: 48, Height: 32, Left: 2);
+      Style: @SmallButtonStyle;
+    }
+  }
+}

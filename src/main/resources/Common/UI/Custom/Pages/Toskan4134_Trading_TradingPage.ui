@@ -1,0 +1,270 @@
+$C = "../Common.ui";
+
+@TitleLabelStyle = LabelStyle(
+  FontSize: 14,
+  TextColor: #bfcdd5,
+  RenderBold: true,
+  RenderUppercase: true,
+  HorizontalAlignment: Center,
+  VerticalAlignment: Center
+);
+
+@StatusLabelStyle = LabelStyle(
+  FontSize: 13,
+  TextColor: #8fa8b8,
+  HorizontalAlignment: Center,
+  VerticalAlignment: Center
+);
+
+@AcceptedStyle = LabelStyle(
+  FontSize: 14,
+  TextColor: #4ade80,
+  RenderBold: true,
+  HorizontalAlignment: Center,
+  VerticalAlignment: Center
+);
+
+@NotAcceptedStyle = LabelStyle(
+  FontSize: 14,
+  TextColor: #f87171,
+  HorizontalAlignment: Center,
+  VerticalAlignment: Center
+);
+
+$C.@PageOverlay {
+  Group {
+    LayoutMode: Middle;
+    Group {
+      LayoutMode: Left;
+      Group {
+        FlexWeight: 1;
+      }
+      $C.@Container {
+        Anchor: (Width: 1050, Height: 800);
+        FlexWeight: 1;
+
+        #Title {
+          Group {
+            $C.@Title {
+              @Text = "TRADE";
+            }
+          }
+        }
+
+        #Content {
+          LayoutMode: Top;
+          Padding: (Left: 12, Right: 12);
+
+          Label #PartnerName {
+            Text: "Trading with: Player";
+            Anchor: (Height: 28);
+            Style: @TitleLabelStyle;
+          }
+
+          Label #StatusMessage {
+            Text: "Click item = 1 stack, use buttons for +1 or +10";
+            Anchor: (Height: 22);
+            Style: @StatusLabelStyle;
+          }
+
+          Group {
+            Anchor: (Height: 220);
+            LayoutMode: Center;
+            Padding: (Top: 8, Bottom: 8);
+
+            Group {
+              Anchor: (Width: 490);
+              LayoutMode: Top;
+
+              Label {
+                Text: "YOUR OFFER";
+                Anchor: (Height: 24);
+                Style: @TitleLabelStyle;
+              }
+
+              Group {
+                FlexWeight: 1;
+                Background: (Color: #3a4a5a);
+                Padding: 2;
+
+                Group #MyOfferContainer {
+                  FlexWeight: 1;
+                  LayoutMode: TopScrolling;
+                  ScrollbarStyle: $C.@DefaultScrollbarStyle;
+                  Padding: 6;
+                  Background: (Color: #1a1a2e(0.4));
+
+                  Group #MyOfferSlotsContainer {
+                    LayoutMode: Top;
+                  }
+                }
+              }
+            }
+
+            Group {
+              Anchor: (Width: 24);
+            }
+
+            Group {
+              Anchor: (Width: 490);
+              LayoutMode: Top;
+
+              Label {
+                Text: "PARTNER OFFER";
+                Anchor: (Height: 24);
+                Style: @TitleLabelStyle;
+              }
+
+              Group {
+                FlexWeight: 1;
+                Background: (Color: #3a4a5a);
+                Padding: 2;
+
+                Group #PartnerOfferContainer {
+                  FlexWeight: 1;
+                  LayoutMode: TopScrolling;
+                  ScrollbarStyle: $C.@DefaultScrollbarStyle;
+                  Padding: 6;
+                  Background: (Color: #1a1a2e(0.4));
+
+                  Group #PartnerOfferSlotsContainer {
+                    LayoutMode: Top;
+                  }
+                }
+              }
+            }
+          }
+
+          Label {
+            Text: "YOUR INVENTORY";
+            Anchor: (Height: 24);
+            Style: @TitleLabelStyle;
+          }
+
+          Group {
+            Anchor: (Height: 320);
+            LayoutMode: Left;
+            Padding: (Left: 10, Right: 10, Top: 4);
+
+            Group {
+              FlexWeight: 1;
+              Background: (Color: #3a4a5a);
+              Padding: 2;
+
+              Group #InventoryContainer {
+                FlexWeight: 1;
+                LayoutMode: TopScrolling;
+                ScrollbarStyle: $C.@DefaultScrollbarStyle;
+                Padding: 6;
+                Background: (Color: #1a1a2e(0.4));
+
+                Group #InventorySlotsContainer {
+                  LayoutMode: Top;
+                }
+              }
+            }
+          }
+
+          Group {
+            Anchor: (Height: 52);
+            LayoutMode: Center;
+            Padding: (Top: 8);
+
+            Group {
+              Anchor: (Width: 160);
+              LayoutMode: Top;
+
+              Label {
+                Text: "Your Status:";
+                Anchor: (Height: 18);
+                Style: @StatusLabelStyle;
+              }
+
+              Label #MyAcceptStatus {
+                Text: "Not accepted";
+                Anchor: (Height: 26);
+                Style: @NotAcceptedStyle;
+              }
+            }
+
+            Group {
+              Anchor: (Width: 120);
+              LayoutMode: Middle;
+
+              Label #CountdownTimer {
+                Text: "";
+                Anchor: (Width: 100, Height: 40);
+                Style: (
+                  FontSize: 20,
+                  TextColor: #fbbf24,
+                  RenderBold: true,
+                  HorizontalAlignment: Center,
+                  VerticalAlignment: Center
+                );
+              }
+            }
+
+            Group {
+              Anchor: (Width: 160);
+              LayoutMode: Top;
+
+              Label {
+                Text: "Partner Status:";
+                Anchor: (Height: 18);
+                Style: @StatusLabelStyle;
+              }
+
+              Label #PartnerAcceptStatus {
+                Text: "Not accepted";
+                Anchor: (Height: 26);
+                Style: @NotAcceptedStyle;
+              }
+            }
+          }
+
+          Group {
+            Anchor: (Height: 50);
+            LayoutMode: Center;
+            Padding: (Top: 6);
+
+            $C.@SecondaryTextButton #AcceptButton {
+              Text: "ACCEPT";
+              Anchor: (Width: 160, Height: 42);
+            }
+
+            $C.@SecondaryTextButton #ConfirmButton {
+              Text: "CONFIRM";
+              Anchor: (Width: 160, Height: 42, Left: 16);
+            }
+
+            $C.@SecondaryTextButton #CancelButton {
+              Text: "CANCEL";
+              Anchor: (Width: 160, Height: 42, Left: 16);
+            }
+          }
+
+          Group {
+            Anchor: (Height: 20);
+            LayoutMode: Center;
+            Padding: (Top: 2);
+
+            Label #DebugInfo {
+              Text: "";
+              Anchor: (Height: 18);
+              Style: (
+                FontSize: 11,
+                TextColor: #666666,
+                HorizontalAlignment: Center
+              );
+            }
+          }
+        }
+      }
+      Group {
+        FlexWeight: 1;
+      }
+    }
+  }
+}
+
+$C.@BackButton {}
