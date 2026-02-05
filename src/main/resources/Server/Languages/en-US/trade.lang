@@ -1,0 +1,90 @@
+# Trade Command Messages
+command.trade.description = Main trade command
+command.trade.help.request = Usage: /trade request <player> - Request a trade with another player
+command.trade.help.accept = Usage: /trade accept - Accept a pending trade request
+command.trade.help.decline = Usage: /trade decline - Decline a pending trade request
+command.trade.help.cancel = Usage: /trade cancel - Cancel the current trade
+command.trade.help.status = Usage: /trade status - Check your current trade status
+command.trade.help.open = Usage: /trade open - Open the trading UI
+command.trade.help.test = Usage: /trade test - Start a test trade (solo development)
+
+# Trade Messages
+trade.request.sent = Trade request sent to {target}
+trade.request.received = Trade request received from {initiator}. Use /trade accept to accept.
+trade.request.accepted = Trade request accepted! Trade started.
+trade.request.declined = Trade request declined.
+trade.request.alreadyInTrade = You are already in a trade.
+trade.request.targetAlreadyInTrade = That player is already in a trade.
+trade.request.alreadyPending = You already have a pending request to this player.
+trade.request.noPending = No pending trade request.
+trade.request.expired = Trade request expired.
+trade.request.targetNotFound = Target player not found.
+
+trade.cancelled.byYou = Trade cancelled.
+trade.cancelled.byPartner = Trade cancelled by your partner.
+trade.cancelled.notInTrade = You are not in an active trade.
+
+trade.test.started = Test trade session started. You are both players.
+trade.test.notAvailable = Test mode is not available.
+
+# Trade Status Messages
+trade.status.negotiating = Negotiating offers
+trade.status.oneAccepted = One player accepted
+trade.status.countdown = Both accepted! Completing in {seconds}s...
+trade.status.completed = Trade completed successfully!
+trade.status.failed = Trade failed: {reason}
+trade.status.cancelled = Trade cancelled
+
+# UI Status Messages
+ui.status.clickInstructions = Click item = 1 stack, use +1/+10 buttons
+ui.status.waitingForPartner = Waiting for partner...
+ui.status.partnerAccepted = Partner accepted! Click ACCEPT
+ui.status.bothAccepted = Both accepted! Wait for countdown
+ui.status.countdownReady = Ready! Click CONFIRM to complete
+ui.status.modifiedInventory = {player}'s inventory has been modified
+ui.status.partnerModified = Partner modified their offer
+ui.status.acceptRevoked = Acceptance revoked - inventory changed
+ui.status.partnerAcceptRevoked = Partner's acceptance revoked
+ui.status.noItemsAvailable = No items available to offer
+ui.status.itemNotFound = Item not found
+ui.status.failedToAdd = Failed to add item to offer
+ui.status.notEnoughSpace = You don't have enough inventory space
+ui.status.waitMoreSeconds = Wait {seconds} more seconds
+ui.status.tradeCompleted = Trade completed successfully!
+ui.status.cancelledByPartner = Trade cancelled by partner
+ui.status.failedValidation = Cannot accept - items no longer available
+ui.status.cannotAcceptState = Cannot accept in current state
+ui.status.noActiveSession = No active trade session
+
+# UI Item Actions
+ui.action.addedToOffer = Added x{amount} to offer
+ui.action.returnedFromOffer = Returned x{amount} from offer
+ui.action.removedFromOffer = Removed {item} from offer
+ui.action.reducedInOffer = Reduced {item} to {amount}
+
+# Trade Execution Errors
+trade.error.noActiveSession = No active trade session
+trade.error.notReady = Trade not ready for execution
+trade.error.countdownNotComplete = Countdown not complete
+trade.error.playerUnavailable = Other player not available
+trade.error.itemsNotFound = You don't have all the offered items anymore
+trade.error.partnerItemsNotFound = {player} doesn't have all offered items
+trade.error.noSpace = You don't have enough inventory space
+trade.error.partnerNoSpace = {player} doesn't have enough inventory space
+trade.error.withdrawFailed = Failed to withdraw your items
+trade.error.partnerWithdrawFailed = {player} - failed to withdraw items
+trade.error.depositFailed = Failed to receive items - not enough space
+trade.error.partnerDepositFailed = {player} couldn't receive items
+trade.error.systemError = Trade failed: {reason}
+
+# Disconnect
+trade.disconnect.cancelled = Trade cancelled - other player disconnected
+trade.disconnect.requestCancelled = Trade request cancelled - player disconnected
+
+# UI Elements
+ui.partnerLabel = Trading with: {name}
+ui.accepted = ACCEPTED
+ui.notAccepted = Not accepted
+ui.inventorySlot = Inventory
+ui.offerSlot = Your Offer
+ui.partnerOfferSlot = Partner's Offer

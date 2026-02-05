@@ -10,6 +10,7 @@ import com.hypixel.hytale.server.core.inventory.ItemStack;
 import com.hypixel.hytale.server.core.inventory.container.ItemContainer;
 import com.hypixel.hytale.server.core.universe.PlayerRef;
 import com.hypixel.hytale.server.core.universe.world.storage.EntityStore;
+import org.toskan4134.hytrade.constants.TradeConstants;
 import org.toskan4134.hytrade.util.InventoryHelper;
 
 import java.util.List;
@@ -24,8 +25,6 @@ public class TradeSession {
 
     private static final HytaleLogger LOGGER = HytaleLogger.forEnclosingClass();
 
-    public static final long COUNTDOWN_DURATION_MS = 3000; // 3 seconds
-
     private final UUID sessionId;
     private final PlayerRef initiator;
     private final PlayerRef target;
@@ -39,10 +38,6 @@ public class TradeSession {
     private boolean targetAccepted;
     private long countdownStartTime;
     private ScheduledFuture<?> countdownTask;
-
-    // Inventory locks
-    private boolean initiatorInventoryLocked;
-    private boolean targetInventoryLocked;
 
     public TradeSession(PlayerRef initiator, PlayerRef target) {
         this(initiator, target, false);
@@ -59,8 +54,6 @@ public class TradeSession {
         this.createdAt = System.currentTimeMillis();
         this.initiatorAccepted = false;
         this.targetAccepted = false;
-        this.initiatorInventoryLocked = false;
-        this.targetInventoryLocked = false;
     }
 
     /**
@@ -117,7 +110,7 @@ public class TradeSession {
             return 0;
         }
         long elapsed = System.currentTimeMillis() - countdownStartTime;
-        return Math.max(0, COUNTDOWN_DURATION_MS - elapsed);
+        return Math.max(0, TradeConstants.COUNTDOWN_DURATION_MS - elapsed);
     }
 
     // ===== STATE MANAGEMENT =====
@@ -190,8 +183,6 @@ public class TradeSession {
             return false;
         }
         state = TradeState.NEGOTIATING;
-        initiatorInventoryLocked = true;
-        targetInventoryLocked = true;
         LOGGER.atInfo().log("Trade session " + sessionId + " moved to NEGOTIATING");
         return true;
     }
@@ -450,7 +441,6 @@ public class TradeSession {
     public void cancel(PlayerRef cancelledBy) {
         state = TradeState.CANCELLED;
         cancelCountdown();
-        unlockInventories();
         LOGGER.atInfo().log("Trade session " + sessionId + " - cancelled by " +
             (cancelledBy != null ? "player" : "system"));
     }
@@ -522,20 +512,6 @@ public class TradeSession {
         this.countdownTask = task;
     }
 
-    private void unlockInventories() {
-        initiatorInventoryLocked = false;
-        targetInventoryLocked = false;
-    }
-
-    public boolean isInventoryLocked(PlayerRef player) {
-        if (isInitiator(player)) {
-            return initiatorInventoryLocked;
-        } else if (isTarget(player)) {
-            return targetInventoryLocked;
-        }
-        return false;
-    }
-
     /**
      * Verify a player has all the specified items in their inventory.
      * Handles consolidated offers against split inventory stacks.
@@ -586,30 +562,6 @@ public class TradeSession {
     }
 
     /**
-     * Check if player has enough empty slots across all containers.
-     */
-    private boolean hasInventorySpace(List<ItemContainer> containers, int requiredSlots) {
-        if (requiredSlots <= 0) {
-            return true;
-        }
-
-        int emptySlots = 0;
-        for (ItemContainer container : containers) {
-            short capacity = container.getCapacity();
-            for (short i = 0; i < capacity; i++) {
-                ItemStack item = container.getItemStack(i);
-                if (item == null || item.isEmpty()) {
-                    emptySlots++;
-                    if (emptySlots >= requiredSlots) {
-                        return true;
-                    }
-                }
-            }
-        }
-        return false;
-    }
-
-    /**
      * Withdraw items from inventory across all containers.
      * Returns the withdrawn items, or null if failed.
      * Handles withdrawing from multiple stacks across multiple containers if needed.
@@ -652,7 +604,7 @@ public class TradeSession {
                 // Failed to withdraw enough - rollback
                 LOGGER.atWarning().log("Failed to withdraw " + toWithdraw.getQuantity() + " of " + itemId +
                     ", still need " + remainingToWithdraw);
-                depositItems(containers, withdrawn);
+                depositItemsSmart(containers, withdrawn);
                 return null;
             }
 
@@ -661,34 +613,6 @@ public class TradeSession {
         }
 
         return withdrawn;
-    }
-
-    /**
-     * Deposit items into inventory across all containers.
-     * Tries to find empty slots in any container.
-     * @deprecated Use depositItemsSmart instead for stack merging support
-     */
-    @Deprecated
-    private boolean depositItems(List<ItemContainer> containers, List<ItemStack> items) {
-        for (ItemStack toDeposit : items) {
-            boolean deposited = false;
-            for (ItemContainer container : containers) {
-                if (deposited) break;
-
-                short capacity = container.getCapacity();
-                for (short i = 0; i < capacity && !deposited; i++) {
-                    ItemStack current = container.getItemStack(i);
-                    if (current == null || current.isEmpty()) {
-                        container.setItemStackForSlot(i, InventoryHelper.copyItemStack(toDeposit));
-                        deposited = true;
-                    }
-                }
-            }
-            if (!deposited) {
-                return false;
-            }
-        }
-        return true;
     }
 
     /**
@@ -806,16 +730,6 @@ public class TradeSession {
             }
         }
         return true;
-    }
-
-    /**
-     * Check if two items are the same type (ignoring quantity).
-     */
-    private boolean itemsMatch(ItemStack a, ItemStack b) {
-        if (a == null || b == null) {
-            return false;
-        }
-        return a.getItem().equals(b.getItem());
     }
 
     /**

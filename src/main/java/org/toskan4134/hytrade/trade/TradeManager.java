@@ -9,6 +9,7 @@ import com.hypixel.hytale.server.core.entity.entities.player.pages.PageManager;
 import com.hypixel.hytale.server.core.universe.PlayerRef;
 import com.hypixel.hytale.server.core.universe.world.storage.EntityStore;
 import org.toskan4134.hytrade.TradingPlugin;
+import org.toskan4134.hytrade.constants.TradeConstants;
 import org.toskan4134.hytrade.ui.TradingPage;
 
 import java.util.Map;
@@ -23,12 +24,6 @@ import java.util.concurrent.*;
 public class TradeManager {
 
     private static final HytaleLogger LOGGER = HytaleLogger.forEnclosingClass();
-
-    // Request timeout (30 seconds)
-    public static final long REQUEST_TIMEOUT_MS = 30000;
-
-    // Maximum concurrent trades per player
-    public static final int MAX_PENDING_REQUESTS = 1;
 
     private final TradingPlugin plugin;
 
@@ -98,13 +93,6 @@ public class TradeManager {
             tradingPageInstances.put(playerId, tradingPage);
         }
         LOGGER.atInfo().log("Registered trading page for " + player.getUsername() + " (UUID: " + playerId + ")");
-    }
-
-    /**
-     * Register a trading page callback (legacy method without entity ref).
-     */
-    public void registerTradingPage(PlayerRef player, Runnable onInventoryChange) {
-        registerTradingPage(player, onInventoryChange, null, null, null);
     }
 
     /**
@@ -332,7 +320,7 @@ public class TradeManager {
                 initiator.sendMessage(Message.raw("Trade request to player timed out"));
                 target.sendMessage(Message.raw("Trade request from player expired"));
             }
-        }, REQUEST_TIMEOUT_MS, TimeUnit.MILLISECONDS);
+        }, TradeConstants.REQUEST_TIMEOUT_MS, TimeUnit.MILLISECONDS);
 
         LOGGER.atInfo().log("Trade request created: " + session.getSessionId());
 
@@ -492,7 +480,7 @@ public class TradeManager {
                 // Notify that confirm is now available
                 current.broadcastMessage("Both players accepted! Click CONFIRM TRADE to complete.");
             }
-        }, TradeSession.COUNTDOWN_DURATION_MS, TimeUnit.MILLISECONDS);
+        }, TradeConstants.COUNTDOWN_DURATION_MS, TimeUnit.MILLISECONDS);
 
         session.setCountdownTask(countdownTask);
     }

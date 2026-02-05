@@ -19,6 +19,7 @@ import com.hypixel.hytale.server.core.ui.builder.UICommandBuilder;
 import com.hypixel.hytale.server.core.ui.builder.UIEventBuilder;
 import com.hypixel.hytale.server.core.universe.PlayerRef;
 import com.hypixel.hytale.server.core.universe.world.storage.EntityStore;
+import org.toskan4134.hytrade.constants.TradeConstants;
 import org.toskan4134.hytrade.trade.TradeManager;
 import org.toskan4134.hytrade.trade.TradeOffer;
 import org.toskan4134.hytrade.trade.TradeSession;
@@ -45,8 +46,7 @@ public class TradingPage extends InteractiveCustomUIPage<TradingPage.TradingPage
     private static final String OFFER_SLOT_UI = "Pages/Toskan4134_Trading_OfferSlot.ui";
     private static final String PARTNER_SLOT_UI = "Pages/Toskan4134_Trading_PartnerSlot.ui";
 
-    // Default max stack size when we can't determine it
-    private static final int DEFAULT_MAX_STACK = 100;
+    // Default max stack size when we can't determine it - use constant from TradeConstants
 
     // Event action keys
     private static final String KEY_ACTION = "Action";
@@ -58,11 +58,11 @@ public class TradingPage extends InteractiveCustomUIPage<TradingPage.TradingPage
     private static final String ACTION_INV_PREFIX = "inv_";
     private static final String ACTION_OFFER_PREFIX = "offer_";
 
-    // Status message colors
-    private static final String COLOR_NORMAL = "#8fa8b8";  // White
-    private static final String COLOR_WARNING = "#ffcc00"; // Yellow
-    private static final String COLOR_ERROR = "#f87171";   // Red
-    private static final String COLOR_SUCCESS = "#44ff44"; // Green
+    // Status message colors - using constants from TradeConstants
+    private static final String COLOR_NORMAL = TradeConstants.COLOR_NORMAL;
+    private static final String COLOR_WARNING = TradeConstants.COLOR_WARNING;
+    private static final String COLOR_ERROR = TradeConstants.COLOR_ERROR;
+    private static final String COLOR_SUCCESS = TradeConstants.COLOR_SUCCESS;
 
     private final TradeManager tradeManager;
     private final PlayerRef playerRef;
@@ -82,7 +82,6 @@ public class TradingPage extends InteractiveCustomUIPage<TradingPage.TradingPage
     private long lastCountdownValue = -1;
 
     // Temporary status message reset
-    private static final long STATUS_RESET_DELAY_MS = 5000; // 5 seconds
     private ScheduledFuture<?> statusResetTask;
 
     /**
@@ -149,7 +148,7 @@ public class TradingPage extends InteractiveCustomUIPage<TradingPage.TradingPage
             } catch (Exception e) {
                 LOGGER.atWarning().withCause(e).log("Error resetting status message");
             }
-        }, STATUS_RESET_DELAY_MS, TimeUnit.MILLISECONDS);
+        }, TradeConstants.STATUS_RESET_DELAY_MS, TimeUnit.MILLISECONDS);
     }
 
     /**
@@ -470,8 +469,8 @@ public class TradingPage extends InteractiveCustomUIPage<TradingPage.TradingPage
         if (itemId.contains("Ingredient") || itemId.contains("Bar") || itemId.contains("Ore")) {
             return 100;
         }
-        // Use current quantity as hint, minimum DEFAULT_MAX_STACK
-        return Math.max(DEFAULT_MAX_STACK, currentQuantity);
+        // Use current quantity as hint, minimum TradeConstants.DEFAULT_MAX_STACK
+        return Math.max(TradeConstants.DEFAULT_MAX_STACK, currentQuantity);
     }
 
 
@@ -682,15 +681,13 @@ public class TradingPage extends InteractiveCustomUIPage<TradingPage.TradingPage
         }
     }
 
-    private static final int SLOTS_PER_ROW = 8;
-
     private void buildInventorySlots(UICommandBuilder commands, UIEventBuilder events) {
         int index = 0;
         int currentRowNum = -1;
 
         for (ConsolidatedItem item : consolidatedInventory.values()) {
             // Create new row if needed (rows are created as children of InventorySlotsContainer)
-            int rowNum = index / SLOTS_PER_ROW;
+            int rowNum = index / TradeConstants.SLOTS_PER_ROW;
             if (rowNum != currentRowNum) {
                 currentRowNum = rowNum;
                 // Create row using appendInline - use Center layout for centering items
@@ -702,7 +699,7 @@ public class TradingPage extends InteractiveCustomUIPage<TradingPage.TradingPage
             commands.append("#InvRow" + currentRowNum, INVENTORY_SLOT_UI);
 
             // Calculate slot index within the row
-            int slotInRow = index % SLOTS_PER_ROW;
+            int slotInRow = index % TradeConstants.SLOTS_PER_ROW;
             String slotSelector = "#InvRow" + currentRowNum + "[" + slotInRow + "]";
 
             commands.set(slotSelector + " #SlotItem.ItemId", item.itemId);
@@ -964,7 +961,7 @@ public class TradingPage extends InteractiveCustomUIPage<TradingPage.TradingPage
         String itemId = safeItemId.replace("_US_", "_").replace("_DA_", "-");
 
         ConsolidatedItem item = consolidatedInventory.get(itemId);
-        int maxStackSize = item != null ? item.maxStackSize : DEFAULT_MAX_STACK;
+        int maxStackSize = item != null ? item.maxStackSize : TradeConstants.DEFAULT_MAX_STACK;
 
         int amount;
         if (amountStr.equals("stack")) {
