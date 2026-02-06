@@ -7,6 +7,7 @@ import com.hypixel.hytale.server.core.entity.entities.Player;
 import com.hypixel.hytale.server.core.event.events.entity.LivingEntityInventoryChangeEvent;
 import com.hypixel.hytale.server.core.universe.PlayerRef;
 import org.toskan4134.hytrade.trade.TradeManager;
+import org.toskan4134.hytrade.util.Common;
 import org.toskan4134.hytrade.trade.TradeSession;
 import org.toskan4134.hytrade.trade.TradeState;
 
@@ -32,7 +33,7 @@ public class InventoryChangeListener {
     public void register(IEventRegistry registry) {
         // Use registerGlobal to receive all inventory change events (for keyed events)
         registry.registerGlobal(LivingEntityInventoryChangeEvent.class, this::onInventoryChange);
-        LOGGER.atInfo().log("InventoryChangeListener registered");
+        Common.logDebug(LOGGER, "InventoryChangeListener registered");
     }
 
     /**

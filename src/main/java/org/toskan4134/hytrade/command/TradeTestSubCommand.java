@@ -8,9 +8,13 @@ import com.hypixel.hytale.component.Store;
 import com.hypixel.hytale.server.core.universe.PlayerRef;
 import com.hypixel.hytale.server.core.universe.world.World;
 import com.hypixel.hytale.server.core.universe.world.storage.EntityStore;
+import org.toskan4134.hytrade.messages.TradeMessages;
 import org.toskan4134.hytrade.trade.TradeManager;
 
 import javax.annotation.Nonnull;
+
+import static org.toskan4134.hytrade.constants.TradeConstants.ADMIN_PERMISSION;
+import static org.toskan4134.hytrade.constants.TradeConstants.DEFAULT_PERMISSION;
 
 /**
  * Subcommand: /trade test
@@ -23,6 +27,8 @@ public class TradeTestSubCommand extends AbstractPlayerCommand {
     public TradeTestSubCommand(TradeManager tradeManager) {
         super("test", "Start a solo test trade session");
         addAliases("debug", "solo");
+        this.requirePermission(ADMIN_PERMISSION + "test");
+
         this.tradeManager = tradeManager;
     }
 
@@ -40,7 +46,7 @@ public class TradeTestSubCommand extends AbstractPlayerCommand {
 
         // Check if already in a trade
         if (tradeManager.isInTrade(playerRef)) {
-            ctx.sender().sendMessage(Message.raw("You are already in a trade. Use /trade cancel first."));
+            ctx.sender().sendMessage(TradeMessages.alreadyInTrade());
             return;
         }
 
@@ -49,23 +55,20 @@ public class TradeTestSubCommand extends AbstractPlayerCommand {
 
         if (result.success) {
             ctx.sender().sendMessage(Message.raw(""));
-            ctx.sender().sendMessage(Message.raw("=== TEST MODE STARTED ==="));
-            ctx.sender().sendMessage(Message.raw("You are now in a simulated trade session."));
+            ctx.sender().sendMessage(TradeMessages.testHeader());
+            ctx.sender().sendMessage(TradeMessages.testDescription());
             ctx.sender().sendMessage(Message.raw(""));
-            ctx.sender().sendMessage(Message.raw("Available commands:"));
-            ctx.sender().sendMessage(Message.raw("  /trade status        - View current trade status"));
-            ctx.sender().sendMessage(Message.raw("  /trade offer <slot>  - Add item from inventory slot"));
-            ctx.sender().sendMessage(Message.raw("  /trade remove <slot> - Remove item from offer slot"));
-            ctx.sender().sendMessage(Message.raw("  /trade accept        - Accept the trade"));
-            ctx.sender().sendMessage(Message.raw("  /trade confirm       - Confirm after countdown"));
-            ctx.sender().sendMessage(Message.raw("  /trade cancel        - Cancel the test"));
+            ctx.sender().sendMessage(TradeMessages.testCommands());
+            ctx.sender().sendMessage(TradeMessages.testAccept());
+            ctx.sender().sendMessage(TradeMessages.testConfirm());
+            ctx.sender().sendMessage(TradeMessages.testCancel());
             ctx.sender().sendMessage(Message.raw(""));
-            ctx.sender().sendMessage(Message.raw("The simulated partner will auto-accept when you do."));
+            ctx.sender().sendMessage(TradeMessages.testAutoAccept());
 
             tradeManager.openTradeUI(playerRef, store, playerEntityRef);
 
         } else {
-            ctx.sender().sendMessage(Message.raw("Failed to start test mode: " + result.message));
+            ctx.sender().sendMessage(TradeMessages.testFailed());
         }
     }
 }

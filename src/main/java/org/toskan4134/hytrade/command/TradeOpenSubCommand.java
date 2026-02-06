@@ -1,7 +1,6 @@
 package org.toskan4134.hytrade.command;
 
 import com.hypixel.hytale.logger.HytaleLogger;
-import com.hypixel.hytale.server.core.Message;
 import com.hypixel.hytale.server.core.command.system.CommandContext;
 import com.hypixel.hytale.server.core.command.system.basecommands.AbstractPlayerCommand;
 import com.hypixel.hytale.component.Ref;
@@ -11,12 +10,15 @@ import com.hypixel.hytale.server.core.entity.entities.player.pages.PageManager;
 import com.hypixel.hytale.server.core.universe.PlayerRef;
 import com.hypixel.hytale.server.core.universe.world.World;
 import com.hypixel.hytale.server.core.universe.world.storage.EntityStore;
+import org.toskan4134.hytrade.messages.TradeMessages;
+import org.toskan4134.hytrade.util.Common;
 import org.toskan4134.hytrade.trade.TradeManager;
 import org.toskan4134.hytrade.trade.TradeSession;
-import org.toskan4134.hytrade.ui.TradingPage;
 
 import javax.annotation.Nonnull;
 import java.util.Optional;
+
+import static org.toskan4134.hytrade.constants.TradeConstants.DEFAULT_PERMISSION;
 
 /**
  * Subcommand: /trade open
@@ -28,8 +30,10 @@ public class TradeOpenSubCommand extends AbstractPlayerCommand {
     private final TradeManager tradeManager;
 
     public TradeOpenSubCommand(TradeManager tradeManager) {
-        super("open", "Open the trading UI");
+        super("open", "Open the current trading UI");
         addAliases("ui", "gui", "window");
+        this.requirePermission(DEFAULT_PERMISSION + "open");
+
         this.tradeManager = tradeManager;
     }
 
@@ -48,7 +52,7 @@ public class TradeOpenSubCommand extends AbstractPlayerCommand {
         // Check if player is in an active trade
         Optional<TradeSession> optSession = tradeManager.getSession(playerRef);
         if (optSession.isEmpty()) {
-            ctx.sender().sendMessage(Message.raw("You are not in an active trade. Use /trade request <player> or /trade test"));
+            ctx.sender().sendMessage(TradeMessages.notInTradeUseRequest());
             return;
         }
 
@@ -56,27 +60,27 @@ public class TradeOpenSubCommand extends AbstractPlayerCommand {
             // Get player component
             Player player = store.getComponent(playerEntityRef, Player.getComponentType());
             if (player == null) {
-                ctx.sender().sendMessage(Message.raw("Could not access player data."));
+                ctx.sender().sendMessage(TradeMessages.errorPlayerUnavailable());
                 return;
             }
 
             // Get page manager
             PageManager pageManager = player.getPageManager();
             if (pageManager == null) {
-                ctx.sender().sendMessage(Message.raw("Could not access page manager."));
+                ctx.sender().sendMessage(TradeMessages.uiOpenFailed());
                 return;
             }
 
             // Create and open the trading page
-            LOGGER.atInfo().log("[TradeOpen] Calling tradeManager.openTradeUI()");
+            Common.logDebug(LOGGER, "[TradeOpen] Calling tradeManager.openTradeUI()");
             tradeManager.openTradeUI(playerRef, store, playerEntityRef);
-            LOGGER.atInfo().log("[TradeOpen] openTradeUI() returned");
+            Common.logDebug(LOGGER, "[TradeOpen] openTradeUI() returned");
 
-            ctx.sender().sendMessage(Message.raw("Trading UI opened."));
+            ctx.sender().sendMessage(TradeMessages.uiOpened());
 
         } catch (Exception e) {
             LOGGER.atSevere().withCause(e).log("[TradeOpen] Exception: " + e.getMessage());
-            ctx.sender().sendMessage(Message.raw("Failed to open trading UI: " + e.getMessage()));
+            ctx.sender().sendMessage(TradeMessages.uiOpenFailed());
         }
     }
 }

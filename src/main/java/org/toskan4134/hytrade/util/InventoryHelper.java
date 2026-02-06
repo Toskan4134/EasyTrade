@@ -1,10 +1,12 @@
 package org.toskan4134.hytrade.util;
 
+import com.hypixel.hytale.server.core.inventory.Inventory;
 import com.hypixel.hytale.server.core.inventory.ItemStack;
 import com.hypixel.hytale.server.core.inventory.container.ItemContainer;
 
 import java.util.ArrayList;
 import java.util.List;
+import java.util.function.Consumer;
 
 /**
  * Utility class for inventory operations.
@@ -227,6 +229,102 @@ public final class InventoryHelper {
             } else {
                 container.removeItemStackFromSlot(i);
             }
+        }
+    }
+
+    // ===== CONTAINER ITERATION UTILITIES =====
+
+    /**
+     * Check if a container is valid (not null and has capacity).
+     * @param container The container to check
+     * @return true if the container is valid
+     */
+    public static boolean isValidContainer(ItemContainer container) {
+        return container != null && container.getCapacity() > 0;
+    }
+
+    /**
+     * Get all valid containers from an inventory in standard order: Hotbar, Backpack, Storage.
+     * @param inventory The inventory to get containers from
+     * @return List of valid containers
+     */
+    public static List<ItemContainer> getAllContainers(Inventory inventory) {
+        List<ItemContainer> containers = new ArrayList<>();
+        if (inventory == null) {
+            return containers;
+        }
+
+        ItemContainer hotbar = inventory.getHotbar();
+        if (isValidContainer(hotbar)) {
+            containers.add(hotbar);
+        }
+
+        ItemContainer backpack = inventory.getBackpack();
+        if (isValidContainer(backpack)) {
+            containers.add(backpack);
+        }
+
+        ItemContainer storage = inventory.getStorage();
+        if (isValidContainer(storage)) {
+            containers.add(storage);
+        }
+
+        return containers;
+    }
+
+    /**
+     * Get containers in deposit order (optimized for adding items): Storage, Backpack, Hotbar.
+     * @param inventory The inventory to get containers from
+     * @return List of valid containers in deposit order
+     */
+    public static List<ItemContainer> getContainersForDeposit(Inventory inventory) {
+        List<ItemContainer> containers = new ArrayList<>();
+        if (inventory == null) {
+            return containers;
+        }
+
+        // Deposit order: Storage first (largest), then Backpack, then Hotbar
+        ItemContainer storage = inventory.getStorage();
+        if (isValidContainer(storage)) {
+            containers.add(storage);
+        }
+
+        ItemContainer backpack = inventory.getBackpack();
+        if (isValidContainer(backpack)) {
+            containers.add(backpack);
+        }
+
+        ItemContainer hotbar = inventory.getHotbar();
+        if (isValidContainer(hotbar)) {
+            containers.add(hotbar);
+        }
+
+        return containers;
+    }
+
+    /**
+     * Execute an action for each valid container in an inventory.
+     * @param inventory The inventory to iterate over
+     * @param action The action to perform on each container
+     */
+    public static void forEachContainer(Inventory inventory, Consumer<ItemContainer> action) {
+        if (inventory == null || action == null) {
+            return;
+        }
+
+        ItemContainer hotbar = inventory.getHotbar();
+        if (isValidContainer(hotbar)) {
+            action.accept(hotbar);
+        }
+
+        ItemContainer backpack = inventory.getBackpack();
+        if (isValidContainer(backpack)) {
+            action.accept(backpack);
+        }
+
+        ItemContainer storage = inventory.getStorage();
+        if (isValidContainer(storage)) {
+            action.accept(storage);
         }
     }
 }

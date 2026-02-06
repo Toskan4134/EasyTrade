@@ -3,14 +3,15 @@ package org.toskan4134.hytrade.trade;
 import com.hypixel.hytale.component.Ref;
 import com.hypixel.hytale.component.Store;
 import com.hypixel.hytale.logger.HytaleLogger;
-import com.hypixel.hytale.server.core.Message;
 import com.hypixel.hytale.server.core.entity.entities.Player;
 import com.hypixel.hytale.server.core.entity.entities.player.pages.PageManager;
 import com.hypixel.hytale.server.core.universe.PlayerRef;
 import com.hypixel.hytale.server.core.universe.world.storage.EntityStore;
 import org.toskan4134.hytrade.TradingPlugin;
 import org.toskan4134.hytrade.constants.TradeConstants;
+import org.toskan4134.hytrade.messages.TradeMessages;
 import org.toskan4134.hytrade.ui.TradingPage;
+import org.toskan4134.hytrade.util.Common;
 
 import java.util.Map;
 import java.util.Optional;
@@ -92,7 +93,7 @@ public class TradeManager {
         if (tradingPage != null) {
             tradingPageInstances.put(playerId, tradingPage);
         }
-        LOGGER.atInfo().log("Registered trading page for " + player.getUsername() + " (UUID: " + playerId + ")");
+        Common.logDebug(LOGGER, "Registered trading page for " + player.getUsername() + " (UUID: " + playerId + ")");
     }
 
     /**
@@ -105,7 +106,7 @@ public class TradeManager {
         playerEntityRefs.remove(playerId);
         tradingPageStatusCallbacks.remove(playerId);
         tradingPageInstances.remove(playerId);
-        LOGGER.atInfo().log("Unregistered trading page for " + player.getUsername() + " (UUID: " + playerId + ")");
+        Common.logDebug(LOGGER, "Unregistered trading page for " + player.getUsername() + " (UUID: " + playerId + ")");
     }
 
     /**
@@ -178,6 +179,7 @@ public class TradeManager {
     /**
      * Close both players' trading UIs when a trade ends.
      * Called when a trade is completed or cancelled.
+     * Handles threading issues by silently skipping UI close if not on world thread.
      */
     public void closeBothTradingPages(TradeSession session) {
         if (session == null) return;
@@ -186,12 +188,7 @@ public class TradeManager {
         UUID initiatorId = session.getInitiator().getUuid();
         org.toskan4134.hytrade.ui.TradingPage initiatorPage = tradingPageInstances.get(initiatorId);
         if (initiatorPage != null) {
-            try {
-                initiatorPage.closeUI();
-                LOGGER.atInfo().log("Closed trading UI for initiator " + session.getInitiator().getUsername());
-            } catch (Exception e) {
-                LOGGER.atWarning().withCause(e).log("Error closing initiator's trading page");
-            }
+            closePlayerUI(session.getInitiator(), initiatorPage, "initiator");
         }
 
         // Close target's UI (if different player - not test mode)
@@ -199,13 +196,31 @@ public class TradeManager {
             UUID targetId = session.getTarget().getUuid();
             org.toskan4134.hytrade.ui.TradingPage targetPage = tradingPageInstances.get(targetId);
             if (targetPage != null) {
-                try {
-                    targetPage.closeUI();
-                    LOGGER.atInfo().log("Closed trading UI for target " + session.getTarget().getUsername());
-                } catch (Exception e) {
-                    LOGGER.atWarning().withCause(e).log("Error closing target's trading page");
-                }
+                closePlayerUI(session.getTarget(), targetPage, "target");
             }
+        }
+    }
+
+    /**
+     * Safely close a player's trading UI, handling threading issues.
+     * If called from wrong thread (e.g., during disconnect), the UI will be closed
+     * naturally when the player tries to interact with it and sees the session is ended.
+     */
+    private void closePlayerUI(PlayerRef player, org.toskan4134.hytrade.ui.TradingPage tradingPage, String role) {
+        try {
+            tradingPage.closeUI();
+            Common.logDebug(LOGGER, "Closed trading UI for " + role + " " + player.getUsername());
+        } catch (IllegalStateException e) {
+            if (e.getMessage() != null && e.getMessage().contains("Assert not in thread")) {
+                // Threading issue - can't close UI from this thread
+                // The UI will close naturally when player interacts with it or manually closes it
+                Common.logDebug(LOGGER, "Skipped UI close for " + role + " " + player.getUsername() +
+                    " (wrong thread - will close naturally)");
+            } else {
+                LOGGER.atWarning().withCause(e).log("Error closing " + role + "'s trading page");
+            }
+        } catch (Exception e) {
+            LOGGER.atWarning().withCause(e).log("Error closing " + role + "'s trading page");
         }
     }
 
@@ -228,10 +243,10 @@ public class TradeManager {
                     // Use UI status instead of chat
                     StatusUpdateCallback callback = tradingPageStatusCallbacks.get(playerId);
                     if (callback != null) {
-                        callback.setStatus("Acceptance revoked - inventory changed", "#ffcc00");
+                        callback.setStatus(TradeMessages.uiAcceptRevoked(), "#ffcc00");
                     }
                     // Notify partner
-                    notifyPartnerStatus(player, "Partner's acceptance revoked", "#ffcc00");
+                    notifyPartnerStatus(player, TradeMessages.uiPartnerAcceptRevoked(), "#ffcc00");
                 }
             }
 
@@ -257,20 +272,25 @@ public class TradeManager {
      * Creates a simulated trade where the player acts as both parties.
      */
     public TradeRequestResult startTestSession(PlayerRef player) {
+        // Check if debug mode is enabled
+        if (!Common.isDebug()) {
+            return new TradeRequestResult(false, "Test mode is only available when debug is enabled in config");
+        }
+
         // Check if player is already in a trade
         if (isInTrade(player)) {
             return new TradeRequestResult(false, "You are already in a trade");
         }
 
         // Create test session (player is both initiator and target)
-        TradeSession session = new TradeSession(player, player, true);
+        TradeSession session = new TradeSession(plugin, player, player, true);
         session.acceptRequest(); // Auto-accept in test mode
 
         // Register as active session
         activeSessions.put(session.getSessionId(), session);
         playerToSession.put(player.getUuid(), session.getSessionId());
 
-        LOGGER.atInfo().log("Test trade session " + session.getSessionId() + " started");
+        Common.logDebug(LOGGER, "Test trade session " + session.getSessionId() + " started");
 
         return new TradeRequestResult(true, "Test session started", session);
     }
@@ -310,19 +330,19 @@ public class TradeManager {
         }
 
         // Create new trade session
-        TradeSession session = new TradeSession(initiator, target);
+        TradeSession session = new TradeSession(plugin, initiator, target);
         pendingRequests.put(targetId, session);
 
         // Schedule timeout
         scheduler.schedule(() -> {
             TradeSession pending = pendingRequests.remove(targetId);
             if (pending != null && pending.equals(session)) {
-                initiator.sendMessage(Message.raw("Trade request to player timed out"));
-                target.sendMessage(Message.raw("Trade request from player expired"));
+                initiator.sendMessage(TradeMessages.requestExpired());
+                target.sendMessage(TradeMessages.requestExpired());
             }
-        }, TradeConstants.REQUEST_TIMEOUT_MS, TimeUnit.MILLISECONDS);
+        }, Common.getRequestTimeoutMs(), TimeUnit.MILLISECONDS);
 
-        LOGGER.atInfo().log("Trade request created: " + session.getSessionId());
+        Common.logDebug(LOGGER, "Trade request created: " + session.getSessionId());
 
         return new TradeRequestResult(true, "Trade request sent",session);
     }
@@ -343,7 +363,7 @@ public class TradeManager {
         playerToSession.put(session.getInitiator().getUuid(), session.getSessionId());
         playerToSession.put(targetId, session.getSessionId());
 
-        LOGGER.atInfo().log("Trade session " + session.getSessionId() + " is now active");
+        Common.logDebug(LOGGER, "Trade session " + session.getSessionId() + " is now active");
 
         return new TradeRequestResult(true, "Trade started", session);
     }
@@ -357,10 +377,10 @@ public class TradeManager {
             return false;
         }
 
-        session.getInitiator().sendMessage(Message.raw("Your trade request was declined"));
-        target.sendMessage(Message.raw("Trade request declined"));
+        session.getInitiator().sendMessage(TradeMessages.requestDeclined());
+        target.sendMessage(TradeMessages.requestDeclined());
 
-        LOGGER.atInfo().log("Trade request " + session.getSessionId() + " was declined");
+        Common.logDebug(LOGGER, "Trade request " + session.getSessionId() + " was declined");
         return true;
     }
 
@@ -478,9 +498,9 @@ public class TradeManager {
                 current.isCountdownComplete()) {
 
                 // Notify that confirm is now available
-                current.broadcastMessage("Both players accepted! Click CONFIRM TRADE to complete.");
+                current.broadcastMessage(TradeMessages.uiCountdownReady());
             }
-        }, TradeConstants.COUNTDOWN_DURATION_MS, TimeUnit.MILLISECONDS);
+        }, Common.getCountdownDurationMs(), TimeUnit.MILLISECONDS);
 
         session.setCountdownTask(countdownTask);
     }
@@ -524,9 +544,13 @@ public class TradeManager {
         TradeSession.TradeResult result = session.execute(store, initiatorRef, targetRef);
 
         if (result.success) {
-            // Clean up session
+            // Clean up session (closes both UIs)
             endSession(session);
-            // Status messages are handled by TradingPage
+            // Notify both players via chat
+            session.getInitiator().sendMessage(TradeMessages.statusCompleted());
+            if (!session.isTestMode()) {
+                session.getTarget().sendMessage(TradeMessages.statusCompleted());
+            }
         } else {
             // Trade failed - notify both trading pages to refresh UI (acceptances were revoked)
             // Status messages are handled by TradingPage based on result.cause
@@ -555,15 +579,11 @@ public class TradeManager {
         session.cancel(player);
         endSession(session);
 
-        // Notify partner's UI about cancellation (their page will close)
+        // Notify partner via chat (UI is already closed by endSession)
         if (!session.isTestMode()) {
             PlayerRef partner = session.getOtherPlayer(player);
             if (partner != null) {
-                UUID partnerId = partner.getUuid();
-                StatusUpdateCallback callback = tradingPageStatusCallbacks.get(partnerId);
-                if (callback != null) {
-                    callback.setStatus("Trade cancelled by partner", "#ff4444");
-                }
+                partner.sendMessage(TradeMessages.cancelledByPartner());
             }
         }
 
@@ -572,30 +592,48 @@ public class TradeManager {
 
     /**
      * Handle player disconnect.
+     * Closes the partner's trading UI and warns them via chat.
      */
     public void onPlayerDisconnect(PlayerRef player) {
+        // Clean up disconnected player's trading page registrations first
+        // (onDismiss won't fire for a disconnected player)
+        unregisterTradingPage(player);
+
         // Cancel any active trade
         Optional<TradeSession> optSession = getSession(player);
         if (optSession.isPresent()) {
             TradeSession session = optSession.get();
+
+            // Get the other player before ending the session
+            PlayerRef other = session.isTestMode() ? null : session.getOtherPlayer(player);
+
             session.cancel(null);
             endSession(session);
 
-            // Notify the other player
-            PlayerRef other = session.getOtherPlayer(player);
+            // For the remaining player: Mark their UI to close and send notification
+            // The UI will close automatically on the next update (when they interact or inventory changes)
+            // because it will detect the session no longer exists
             if (other != null) {
-                other.sendMessage(Message.raw("Trade cancelled - other player disconnected"));
+                UUID otherId = other.getUuid();
+                org.toskan4134.hytrade.ui.TradingPage otherPage = tradingPageInstances.get(otherId);
+                if (otherPage != null) {
+                    // Mark this page to close on next update (deferred close on WorldThread)
+                    otherPage.requestClose();
+                    Common.logDebug(LOGGER, "Marked " + other.getUsername() + "'s UI for deferred close");
+                }
+
+                // Send chat notification
+                other.sendMessage(TradeMessages.disconnectCancelled());
             }
         }
 
         // Cancel any pending requests where this player is involved
-        UUID playerId = player.getUuid();
         pendingRequests.entrySet().removeIf(entry -> {
             TradeSession session = entry.getValue();
             if (session.isParticipant(player)) {
                 PlayerRef other = session.getOtherPlayer(player);
                 if (other != null) {
-                    other.sendMessage(Message.raw("Trade request cancelled - player disconnected"));
+                    other.sendMessage(TradeMessages.disconnectRequestCancelled());
                 }
                 return true;
             }
@@ -613,7 +651,7 @@ public class TradeManager {
         activeSessions.remove(session.getSessionId());
         playerToSession.remove(session.getInitiator().getUuid());
         playerToSession.remove(session.getTarget().getUuid());
-        LOGGER.atInfo().log("Trade session " + session.getSessionId() + " ended");
+        Common.logDebug(LOGGER, "Trade session " + session.getSessionId() + " ended");
     }
 
     /**
@@ -684,7 +722,7 @@ public class TradeManager {
             PageManager pageManager = player.getPageManager();
             if (pageManager == null) return;
 
-            TradingPage tradingPage = new TradingPage(playerRef, this, store, playerEntityRef);
+            TradingPage tradingPage = new TradingPage(plugin, playerRef, this, store, playerEntityRef);
             pageManager.openCustomPage(playerEntityRef, store, tradingPage);
 
         } catch (Exception ignored) {

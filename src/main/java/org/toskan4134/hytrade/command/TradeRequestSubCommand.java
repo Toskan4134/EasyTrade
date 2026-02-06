@@ -1,6 +1,5 @@
 package org.toskan4134.hytrade.command;
 
-import com.hypixel.hytale.server.core.Message;
 import com.hypixel.hytale.server.core.NameMatching;
 import com.hypixel.hytale.server.core.command.system.CommandContext;
 import com.hypixel.hytale.server.core.command.system.arguments.system.RequiredArg;
@@ -12,10 +11,13 @@ import com.hypixel.hytale.server.core.universe.PlayerRef;
 import com.hypixel.hytale.server.core.universe.Universe;
 import com.hypixel.hytale.server.core.universe.world.World;
 import com.hypixel.hytale.server.core.universe.world.storage.EntityStore;
+import org.toskan4134.hytrade.messages.TradeMessages;
 import org.toskan4134.hytrade.trade.TradeManager;
 import org.toskan4134.hytrade.trade.TradeState;
 
 import javax.annotation.Nonnull;
+
+import static org.toskan4134.hytrade.constants.TradeConstants.DEFAULT_PERMISSION;
 
 /**
  * Subcommand: /trade request <player>
@@ -28,7 +30,9 @@ public class TradeRequestSubCommand extends AbstractPlayerCommand {
 
     public TradeRequestSubCommand(TradeManager tradeManager) {
         super("request", "Send a trade request to a player");
-        addAliases("req", "send");
+        addAliases("req", "r", "send", "ask");
+        this.requirePermission(DEFAULT_PERMISSION + "request");
+
         this.tradeManager = tradeManager;
         this.playerArg = withRequiredArg("player", "Target player name", ArgTypes.STRING);
     }
@@ -49,7 +53,7 @@ public class TradeRequestSubCommand extends AbstractPlayerCommand {
 
         // Check if player is already in a trade
         if (tradeManager.isInTrade(playerRef)) {
-            ctx.sender().sendMessage(Message.raw("You are already in a trade. Use /trade cancel to cancel it."));
+            ctx.sender().sendMessage(TradeMessages.alreadyInTrade());
             return;
         }
 
@@ -57,13 +61,13 @@ public class TradeRequestSubCommand extends AbstractPlayerCommand {
         PlayerRef targetRef = Universe.get().getPlayerByUsername(targetName, NameMatching.EXACT_IGNORE_CASE);
 
         if (targetRef == null) {
-            ctx.sender().sendMessage(Message.raw("Player '" + targetName + "' not found."));
+            ctx.sender().sendMessage(TradeMessages.targetNotFound());
             return;
         }
 
         // Can't trade with yourself
         if (targetRef.getUuid().equals(playerRef.getUuid())) {
-            ctx.sender().sendMessage(Message.raw("You cannot trade with yourself. Use /trade test for testing."));
+            ctx.sender().sendMessage(TradeMessages.cannotTradeSelf());
             return;
         }
 
@@ -71,17 +75,18 @@ public class TradeRequestSubCommand extends AbstractPlayerCommand {
         TradeManager.TradeRequestResult result = tradeManager.requestTrade(playerRef, targetRef);
 
         if (result.success) {
-            ctx.sender().sendMessage(Message.raw("Trade request sent to " + targetName));
-            targetRef.sendMessage(Message.raw("You received a trade request from " + playerRef.getUsername() + ". Use /trade accept or /trade decline"));
+            // Send to requester with target name
+            ctx.sender().sendMessage(TradeMessages.requestSent(targetName));
+            // Send to target with initiator name
+            targetRef.sendMessage(TradeMessages.requestReceived(playerRef.getUsername()));
 
             // If trade was auto-accepted (they had sent us a request)
             if (result.session != null && result.session.getState() == TradeState.NEGOTIATING) {
-                ctx.sender().sendMessage(Message.raw("Trade started! Use /trade status to view."));
-                targetRef.sendMessage(Message.raw("Trade started! Use /trade status to view."));
+                ctx.sender().sendMessage(TradeMessages.requestAccepted());
+                targetRef.sendMessage(TradeMessages.requestAccepted());
             }
         } else {
-            ctx.sender().sendMessage(Message.raw(result.message));
+            ctx.sender().sendMessage(TradeMessages.alreadyPending());
         }
     }
-
 }

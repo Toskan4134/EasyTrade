@@ -45,15 +45,15 @@ $C.@PageOverlay {
 
         #Title {
           Group {
-            $C.@Title {
-              @Text = "TRADE";
+            $C.@Title #TitleLabel{
+              @Text = "HYTRADE";
             }
           }
         }
 
         #Content {
           LayoutMode: Top;
-          Padding: (Left: 12, Right: 12);
+          Padding: 12;
 
           Label #PartnerName {
             Text: "Trading with: Player";
@@ -76,7 +76,7 @@ $C.@PageOverlay {
               Anchor: (Width: 490);
               LayoutMode: Top;
 
-              Label {
+              Label #YourOfferLabel {
                 Text: "YOUR OFFER";
                 Anchor: (Height: 24);
                 Style: @TitleLabelStyle;
@@ -109,7 +109,7 @@ $C.@PageOverlay {
               Anchor: (Width: 490);
               LayoutMode: Top;
 
-              Label {
+              Label #PartnerOfferLabel {
                 Text: "PARTNER OFFER";
                 Anchor: (Height: 24);
                 Style: @TitleLabelStyle;
@@ -135,7 +135,7 @@ $C.@PageOverlay {
             }
           }
 
-          Label {
+          Label #YourInventoryLabel {
             Text: "YOUR INVENTORY";
             Anchor: (Height: 24);
             Style: @TitleLabelStyle;
@@ -174,7 +174,7 @@ $C.@PageOverlay {
               Anchor: (Width: 160);
               LayoutMode: Top;
 
-              Label {
+              Label #YourStatusLabel {
                 Text: "Your Status:";
                 Anchor: (Height: 18);
                 Style: @StatusLabelStyle;
@@ -208,7 +208,7 @@ $C.@PageOverlay {
               Anchor: (Width: 160);
               LayoutMode: Top;
 
-              Label {
+              Label #PartnerStatusLabel {
                 Text: "Partner Status:";
                 Anchor: (Height: 18);
                 Style: @StatusLabelStyle;

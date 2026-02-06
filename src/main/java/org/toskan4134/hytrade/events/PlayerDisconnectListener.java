@@ -5,6 +5,7 @@ import com.hypixel.hytale.logger.HytaleLogger;
 import com.hypixel.hytale.server.core.event.events.player.PlayerDisconnectEvent;
 import com.hypixel.hytale.server.core.universe.PlayerRef;
 import org.toskan4134.hytrade.trade.TradeManager;
+import org.toskan4134.hytrade.util.Common;
 
 /**
  * Listens for player disconnect events to properly cancel trades
@@ -25,7 +26,7 @@ public class PlayerDisconnectListener {
      */
     public void register(IEventRegistry registry) {
         registry.register(PlayerDisconnectEvent.class, this::onPlayerDisconnect);
-        LOGGER.atInfo().log("PlayerDisconnectListener registered");
+        Common.logDebug(LOGGER, "PlayerDisconnectListener registered");
     }
 
     /**
@@ -34,7 +35,7 @@ public class PlayerDisconnectListener {
     private void onPlayerDisconnect(PlayerDisconnectEvent event) {
         PlayerRef player = event.getPlayerRef();
         if (player != null) {
-            LOGGER.atInfo().log("Player disconnected, checking for active trades");
+            Common.logDebug(LOGGER, "Player disconnected, checking for active trades");
             tradeManager.onPlayerDisconnect(player);
         }
     }

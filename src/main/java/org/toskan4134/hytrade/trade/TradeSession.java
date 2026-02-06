@@ -10,7 +10,10 @@ import com.hypixel.hytale.server.core.inventory.ItemStack;
 import com.hypixel.hytale.server.core.inventory.container.ItemContainer;
 import com.hypixel.hytale.server.core.universe.PlayerRef;
 import com.hypixel.hytale.server.core.universe.world.storage.EntityStore;
+import org.toskan4134.hytrade.TradingPlugin;
 import org.toskan4134.hytrade.constants.TradeConstants;
+import org.toskan4134.hytrade.messages.TradeMessages;
+import org.toskan4134.hytrade.util.Common;
 import org.toskan4134.hytrade.util.InventoryHelper;
 
 import java.util.List;
@@ -25,6 +28,7 @@ public class TradeSession {
 
     private static final HytaleLogger LOGGER = HytaleLogger.forEnclosingClass();
 
+    private final TradingPlugin plugin;
     private final UUID sessionId;
     private final PlayerRef initiator;
     private final PlayerRef target;
@@ -39,11 +43,12 @@ public class TradeSession {
     private long countdownStartTime;
     private ScheduledFuture<?> countdownTask;
 
-    public TradeSession(PlayerRef initiator, PlayerRef target) {
-        this(initiator, target, false);
+    public TradeSession(TradingPlugin plugin, PlayerRef initiator, PlayerRef target) {
+        this(plugin, initiator, target, false);
     }
 
-    public TradeSession(PlayerRef initiator, PlayerRef target, boolean testMode) {
+    public TradeSession(TradingPlugin plugin, PlayerRef initiator, PlayerRef target, boolean testMode) {
+        this.plugin = plugin;
         this.sessionId = UUID.randomUUID();
         this.initiator = initiator;
         this.target = target;
@@ -110,7 +115,7 @@ public class TradeSession {
             return 0;
         }
         long elapsed = System.currentTimeMillis() - countdownStartTime;
-        return Math.max(0, TradeConstants.COUNTDOWN_DURATION_MS - elapsed);
+        return Math.max(0, Common.getCountdownDurationMs() - elapsed);
     }
 
     // ===== STATE MANAGEMENT =====
@@ -183,7 +188,7 @@ public class TradeSession {
             return false;
         }
         state = TradeState.NEGOTIATING;
-        LOGGER.atInfo().log("Trade session " + sessionId + " moved to NEGOTIATING");
+        Common.logDebug(LOGGER, "Trade session " + sessionId + " moved to NEGOTIATING");
         return true;
     }
 
@@ -204,7 +209,7 @@ public class TradeSession {
             targetOffer.lock();
             state = TradeState.BOTH_ACCEPTED_COUNTDOWN;
             countdownStartTime = System.currentTimeMillis();
-            LOGGER.atInfo().log("Trade session " + sessionId + " [TEST] - both accepted, starting countdown");
+            Common.logDebug(LOGGER, "Trade session " + sessionId + " [TEST] - both accepted, starting countdown");
             return true;
         }
 
@@ -222,10 +227,10 @@ public class TradeSession {
         if (initiatorAccepted && targetAccepted) {
             state = TradeState.BOTH_ACCEPTED_COUNTDOWN;
             countdownStartTime = System.currentTimeMillis();
-            LOGGER.atInfo().log("Trade session " + sessionId + " - both accepted, starting countdown");
+            Common.logDebug(LOGGER, "Trade session " + sessionId + " - both accepted, starting countdown");
         } else {
             state = TradeState.ONE_ACCEPTED;
-            LOGGER.atInfo().log("Trade session " + sessionId + " - one player accepted");
+            Common.logDebug(LOGGER, "Trade session " + sessionId + " - one player accepted");
         }
 
         return true;
@@ -236,20 +241,20 @@ public class TradeSession {
      */
     public boolean revokeAccept(PlayerRef player) {
         if (state != TradeState.ONE_ACCEPTED && state != TradeState.BOTH_ACCEPTED_COUNTDOWN) {
-            LOGGER.atInfo().log("Cannot revoke - wrong state: " + state);
+            Common.logDebug(LOGGER, "Cannot revoke - wrong state: " + state);
             return false;
         }
 
         if (isInitiator(player)) {
             initiatorAccepted = false;
             initiatorOffer.unlock();
-            LOGGER.atInfo().log("Initiator revoked acceptance");
+            Common.logDebug(LOGGER, "Initiator revoked acceptance");
         } else if (isTarget(player)) {
             targetAccepted = false;
             targetOffer.unlock();
-            LOGGER.atInfo().log("Target revoked acceptance");
+            Common.logDebug(LOGGER, "Target revoked acceptance");
         } else {
-            LOGGER.atInfo().log("Player not recognized as initiator or target");
+            Common.logDebug(LOGGER, "Player not recognized as initiator or target");
             return false;
         }
 
@@ -257,7 +262,7 @@ public class TradeSession {
         state = TradeState.NEGOTIATING;
         cancelCountdown();
 
-        LOGGER.atInfo().log("Trade session " + sessionId + " - acceptance revoked, back to NEGOTIATING");
+        Common.logDebug(LOGGER, "Trade session " + sessionId + " - acceptance revoked, back to NEGOTIATING");
         return true;
     }
 
@@ -268,7 +273,7 @@ public class TradeSession {
         if (state == TradeState.ONE_ACCEPTED || state == TradeState.BOTH_ACCEPTED_COUNTDOWN) {
             // Reset acceptances when offers change
             revokeAllAcceptances();
-            LOGGER.atInfo().log("Trade session " + sessionId + " - offer changed, reset to NEGOTIATING");
+            Common.logDebug(LOGGER, "Trade session " + sessionId + " - offer changed, reset to NEGOTIATING");
         }
     }
 
@@ -283,7 +288,7 @@ public class TradeSession {
         targetOffer.unlock();
         state = TradeState.NEGOTIATING;
         cancelCountdown();
-        LOGGER.atInfo().log("Trade session " + sessionId + " - all acceptances revoked");
+        Common.logDebug(LOGGER, "Trade session " + sessionId + " - all acceptances revoked");
     }
 
     /**
@@ -305,11 +310,11 @@ public class TradeSession {
                                 Ref<EntityStore> initiatorEntityRef,
                                 Ref<EntityStore> targetEntityRef) {
         if (state != TradeState.BOTH_ACCEPTED_COUNTDOWN || !isCountdownComplete()) {
-            return new TradeResult(false, "Trade not ready for execution");
+            return new TradeResult(false, TradeMessages.errorNotReady().getAnsiMessage());
         }
 
         state = TradeState.EXECUTING;
-        LOGGER.atInfo().log("Trade session " + sessionId + " - executing atomic trade");
+        Common.logDebug(LOGGER, "Trade session " + sessionId + " - executing atomic trade");
 
         try {
             // Get player components
@@ -318,7 +323,7 @@ public class TradeSession {
 
             if (initiatorPlayer == null || targetPlayer == null) {
                 revokeAllAcceptances();
-                return new TradeResult(false, "Could not access player data");
+                return new TradeResult(false, TradeMessages.errorPlayerUnavailable().getAnsiMessage());
             }
 
             Inventory initiatorInventory = initiatorPlayer.getInventory();
@@ -326,7 +331,7 @@ public class TradeSession {
 
             if (initiatorInventory == null || targetInventory == null) {
                 revokeAllAcceptances();
-                return new TradeResult(false, "Could not access inventories");
+                return new TradeResult(false, TradeMessages.errorPlayerUnavailable().getAnsiMessage());
             }
 
             // Get ALL containers for each player (hotbar + backpack + storage)
@@ -342,8 +347,8 @@ public class TradeSession {
             if (!verifyPlayerHasItems(initiatorContainers, initiatorOffer.getItems())) {
                 revokeAllAcceptances();
                 return TradeResult.initiatorFailure(
-                    "You don't have all the offered items anymore",
-                    initiator.getUsername() + " doesn't have all offered items"
+                    TradeMessages.errorItemsNotFound().getAnsiMessage(),
+                    TradeMessages.errorPartnerItemsNotFound(initiator.getUsername()).getAnsiMessage()
                 );
             }
 
@@ -351,8 +356,8 @@ public class TradeSession {
             if (!verifyPlayerHasItems(targetContainers, targetOffer.getItems())) {
                 revokeAllAcceptances();
                 return TradeResult.targetFailure(
-                    "You don't have all the offered items anymore",
-                    target.getUsername() + " doesn't have all offered items"
+                    TradeMessages.errorItemsNotFound().getAnsiMessage(),
+                    TradeMessages.errorPartnerItemsNotFound(target.getUsername()).getAnsiMessage()
                 );
             }
 
@@ -360,16 +365,16 @@ public class TradeSession {
             if (!canReceiveItems(initiatorContainers, targetOffer.getItems())) {
                 revokeAllAcceptances();
                 return TradeResult.initiatorFailure(
-                    "You don't have enough inventory space",
-                    initiator.getUsername() + " doesn't have enough inventory space"
+                    TradeMessages.errorNoSpace().getAnsiMessage(),
+                    TradeMessages.errorPartnerNoSpace(initiator.getUsername()).getAnsiMessage()
                 );
             }
 
             if (!canReceiveItems(targetContainers, initiatorOffer.getItems())) {
                 revokeAllAcceptances();
                 return TradeResult.targetFailure(
-                    "You don't have enough inventory space",
-                    target.getUsername() + " doesn't have enough inventory space"
+                    TradeMessages.errorNoSpace().getAnsiMessage(),
+                    TradeMessages.errorPartnerNoSpace(target.getUsername()).getAnsiMessage()
                 );
             }
 
@@ -379,8 +384,8 @@ public class TradeSession {
             if (initiatorWithdrawn == null) {
                 revokeAllAcceptances();
                 return TradeResult.initiatorFailure(
-                    "Failed to withdraw your items",
-                    initiator.getUsername() + " - failed to withdraw items"
+                    TradeMessages.errorWithdrawFailed().getAnsiMessage(),
+                    TradeMessages.errorPartnerWithdrawFailed(initiator.getUsername()).getAnsiMessage()
                 );
             }
 
@@ -391,8 +396,8 @@ public class TradeSession {
                 depositItemsSmart(initiatorDepositContainers, initiatorWithdrawn);
                 revokeAllAcceptances();
                 return TradeResult.targetFailure(
-                    "Failed to withdraw your items",
-                    target.getUsername() + " - failed to withdraw items"
+                    TradeMessages.errorWithdrawFailed().getAnsiMessage(),
+                    TradeMessages.errorPartnerWithdrawFailed(target.getUsername()).getAnsiMessage()
                 );
             }
 
@@ -404,8 +409,8 @@ public class TradeSession {
                 depositItemsSmart(targetDepositContainers, targetWithdrawn);
                 revokeAllAcceptances();
                 return TradeResult.initiatorFailure(
-                    "Failed to receive items - not enough space",
-                    initiator.getUsername() + " couldn't receive items"
+                    TradeMessages.errorDepositFailed().getAnsiMessage(),
+                    TradeMessages.errorPartnerDepositFailed(initiator.getUsername()).getAnsiMessage()
                 );
             }
 
@@ -417,8 +422,8 @@ public class TradeSession {
                 depositItemsSmart(targetDepositContainers, targetWithdrawn);
                 revokeAllAcceptances();
                 return TradeResult.targetFailure(
-                    "Failed to receive items - not enough space",
-                    target.getUsername() + " couldn't receive items"
+                    TradeMessages.errorDepositFailed().getAnsiMessage(),
+                    TradeMessages.errorPartnerDepositFailed(target.getUsername()).getAnsiMessage()
                 );
             }
 
@@ -426,12 +431,12 @@ public class TradeSession {
             state = TradeState.COMPLETED;
             LOGGER.atInfo().log("Trade session " + sessionId + " - completed successfully!");
 
-            return new TradeResult(true, "Trade completed successfully");
+            return new TradeResult(true, TradeMessages.statusCompleted().getAnsiMessage());
 
         } catch (Exception e) {
             LOGGER.atSevere().withCause(e).log("Trade session " + sessionId + " - execution failed with exception");
             revokeAllAcceptances();
-            return new TradeResult(false, "Trade failed: " + e.getMessage());
+            return new TradeResult(false, TradeMessages.errorSystemError(e.getMessage()).getAnsiMessage());
         }
     }
 
@@ -441,7 +446,7 @@ public class TradeSession {
     public void cancel(PlayerRef cancelledBy) {
         state = TradeState.CANCELLED;
         cancelCountdown();
-        LOGGER.atInfo().log("Trade session " + sessionId + " - cancelled by " +
+        Common.logDebug(LOGGER, "Trade session " + sessionId + " - cancelled by " +
             (cancelledBy != null ? "player" : "system"));
     }
 
@@ -452,24 +457,7 @@ public class TradeSession {
      * Used for verification and withdrawal - order doesn't matter.
      */
     private List<ItemContainer> getAllContainers(Inventory inventory) {
-        List<ItemContainer> containers = new java.util.ArrayList<>();
-
-        ItemContainer hotbar = inventory.getHotbar();
-        if (hotbar != null && hotbar.getCapacity() > 0) {
-            containers.add(hotbar);
-        }
-
-        ItemContainer backpack = inventory.getBackpack();
-        if (backpack != null && backpack.getCapacity() > 0) {
-            containers.add(backpack);
-        }
-
-        ItemContainer storage = inventory.getStorage();
-        if (storage != null && storage.getCapacity() > 0) {
-            containers.add(storage);
-        }
-
-        return containers;
+        return InventoryHelper.getAllContainers(inventory);
     }
 
     /**
@@ -477,27 +465,7 @@ public class TradeSession {
      * Items will be deposited to storage first, then hotbar, then backpack.
      */
     private List<ItemContainer> getContainersForDeposit(Inventory inventory) {
-        List<ItemContainer> containers = new java.util.ArrayList<>();
-
-        // 1. Storage first (main inventory)
-        ItemContainer storage = inventory.getStorage();
-        if (storage != null && storage.getCapacity() > 0) {
-            containers.add(storage);
-        }
-
-        // 2. Hotbar second
-        ItemContainer hotbar = inventory.getHotbar();
-        if (hotbar != null && hotbar.getCapacity() > 0) {
-            containers.add(hotbar);
-        }
-
-        // 3. Backpack last
-        ItemContainer backpack = inventory.getBackpack();
-        if (backpack != null && backpack.getCapacity() > 0) {
-            containers.add(backpack);
-        }
-
-        return containers;
+        return InventoryHelper.getContainersForDeposit(inventory);
     }
 
     private void cancelCountdown() {

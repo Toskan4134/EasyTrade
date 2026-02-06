@@ -1,8 +1,5 @@
 package org.toskan4134.hytrade.ui;
 
-import com.hypixel.hytale.codec.Codec;
-import com.hypixel.hytale.codec.KeyedCodec;
-import com.hypixel.hytale.codec.builder.BuilderCodec;
 import com.hypixel.hytale.component.Ref;
 import com.hypixel.hytale.component.Store;
 import com.hypixel.hytale.logger.HytaleLogger;
@@ -19,44 +16,35 @@ import com.hypixel.hytale.server.core.ui.builder.UICommandBuilder;
 import com.hypixel.hytale.server.core.ui.builder.UIEventBuilder;
 import com.hypixel.hytale.server.core.universe.PlayerRef;
 import com.hypixel.hytale.server.core.universe.world.storage.EntityStore;
+import org.toskan4134.hytrade.TradingPlugin;
 import org.toskan4134.hytrade.constants.TradeConstants;
+import org.toskan4134.hytrade.messages.TradeMessages;
 import org.toskan4134.hytrade.trade.TradeManager;
 import org.toskan4134.hytrade.trade.TradeOffer;
 import org.toskan4134.hytrade.trade.TradeSession;
 import org.toskan4134.hytrade.trade.TradeState;
+import org.toskan4134.hytrade.util.Common;
+import org.toskan4134.hytrade.util.InventoryHelper;
 
 import javax.annotation.Nonnull;
 import java.util.*;
 import java.util.concurrent.Executors;
+import java.util.concurrent.RejectedExecutionException;
 import java.util.concurrent.ScheduledExecutorService;
 import java.util.concurrent.ScheduledFuture;
 import java.util.concurrent.TimeUnit;
+
+import static org.toskan4134.hytrade.constants.TradeConstants.*;
+import static org.toskan4134.hytrade.util.Common.isDebug;
 
 /**
  * UI Controller for the trading interface.
  * Displays consolidated inventories and handles trade interactions with quantity controls.
  */
-public class TradingPage extends InteractiveCustomUIPage<TradingPage.TradingPageData> {
+public class TradingPage extends InteractiveCustomUIPage<TradingPageData> {
 
     private static final HytaleLogger LOGGER = HytaleLogger.forEnclosingClass();
-    private static final String PAGE_LAYOUT = "Pages/Toskan4134_Trading_TradingPage.ui";
-
-    // Slot component .ui files
-    private static final String INVENTORY_SLOT_UI = "Pages/Toskan4134_Trading_InventorySlot.ui";
-    private static final String OFFER_SLOT_UI = "Pages/Toskan4134_Trading_OfferSlot.ui";
-    private static final String PARTNER_SLOT_UI = "Pages/Toskan4134_Trading_PartnerSlot.ui";
-
     // Default max stack size when we can't determine it - use constant from TradeConstants
-
-    // Event action keys
-    private static final String KEY_ACTION = "Action";
-    private static final String ACTION_ACCEPT = "accept";
-    private static final String ACTION_CONFIRM = "confirm";
-    private static final String ACTION_CANCEL = "cancel";
-
-    // Action prefixes: inv_[itemId]_[amount], offer_[itemId]_[amount]
-    private static final String ACTION_INV_PREFIX = "inv_";
-    private static final String ACTION_OFFER_PREFIX = "offer_";
 
     // Status message colors - using constants from TradeConstants
     private static final String COLOR_NORMAL = TradeConstants.COLOR_NORMAL;
@@ -84,6 +72,9 @@ public class TradingPage extends InteractiveCustomUIPage<TradingPage.TradingPage
     // Temporary status message reset
     private ScheduledFuture<?> statusResetTask;
 
+    // Flag to request UI close on next update (for thread-safe closing)
+    private volatile boolean closeRequested = false;
+
     /**
      * Check if a temporary status message is currently being displayed.
      * Used to prevent updateStatusUI from overwriting warning/error messages.
@@ -93,31 +84,16 @@ public class TradingPage extends InteractiveCustomUIPage<TradingPage.TradingPage
     }
 
     /**
-     * Represents a consolidated item (multiple stacks merged into one entry)
+     * Request this trading page to close on the next UI update.
+     * Used to safely close the UI from threads that can't directly close it.
      */
-    private static class ConsolidatedItem {
-        String itemId;
-        Item item; // Store the actual Item object for creating valid ItemStacks
-        int totalQuantity;
-        int offeredQuantity;
-        int maxStackSize;
-
-        ConsolidatedItem(String itemId, Item item, int maxStackSize) {
-            this.itemId = itemId;
-            this.item = item;
-            this.totalQuantity = 0;
-            this.offeredQuantity = 0;
-            this.maxStackSize = maxStackSize;
-        }
-
-        int getAvailable() {
-            return totalQuantity - offeredQuantity;
-        }
+    public void requestClose() {
+        this.closeRequested = true;
     }
 
-    public TradingPage(PlayerRef playerRef, TradeManager tradeManager,
+    public TradingPage(TradingPlugin plugin, PlayerRef playerRef, TradeManager tradeManager,
                        Store<EntityStore> store, Ref<EntityStore> entityRef) {
-        super(playerRef, CustomPageLifetime.CanDismiss, TradingPageData.CODEC);
+        super(playerRef, CustomPageLifetime.CanDismiss, org.toskan4134.hytrade.ui.TradingPageData.CODEC);
         this.playerRef = playerRef;
         this.tradeManager = tradeManager;
         this.store = store;
@@ -141,27 +117,37 @@ public class TradingPage extends InteractiveCustomUIPage<TradingPage.TradingPage
      * After the delay, refreshStatusUI() will be called to restore the normal status.
      */
     private void scheduleStatusReset() {
+        // Don't schedule if scheduler is shut down (UI is closing)
+        if (countdownScheduler.isShutdown() || countdownScheduler.isTerminated()) {
+            return;
+        }
+
         cancelStatusReset();
-        statusResetTask = countdownScheduler.schedule(() -> {
-            try {
-                refreshStatusUI();
-            } catch (Exception e) {
-                LOGGER.atWarning().withCause(e).log("Error resetting status message");
-            }
-        }, TradeConstants.STATUS_RESET_DELAY_MS, TimeUnit.MILLISECONDS);
+        try {
+            statusResetTask = countdownScheduler.schedule(() -> {
+                try {
+                    refreshStatusUI();
+                } catch (Exception e) {
+                    LOGGER.atWarning().withCause(e).log("Error resetting status message");
+                }
+            }, STATUS_RESET_DELAY_MS, TimeUnit.MILLISECONDS);
+        } catch (RejectedExecutionException e) {
+            // Scheduler was shut down between the check and the schedule call
+            Common.logDebug(LOGGER, "Status reset task rejected - scheduler shut down");
+        }
     }
 
     /**
      * Update status message with normal (white) color.
-     * Normal messages are persistent (no auto-reset).
+     * Normal messages auto-reset to state-based status after 5 seconds.
      */
     private void setStatusNormal(String message) {
-        cancelStatusReset(); // Cancel any pending reset since we're setting a normal message
         UICommandBuilder commands = new UICommandBuilder();
         UIEventBuilder events = new UIEventBuilder();
         commands.set("#StatusMessage.Text", message);
         commands.set("#StatusMessage.Style.TextColor", COLOR_NORMAL);
         sendUpdate(commands, events, false);
+        scheduleStatusReset();
     }
 
     /**
@@ -192,24 +178,15 @@ public class TradingPage extends InteractiveCustomUIPage<TradingPage.TradingPage
 
     /**
      * Update status message with success (green) color.
-     * Success messages are persistent (no auto-reset).
+     * Success messages auto-reset to normal status after 5 seconds.
      */
     private void setStatusSuccess(String message) {
-        cancelStatusReset(); // Cancel any pending reset since success is a final state
         UICommandBuilder commands = new UICommandBuilder();
         UIEventBuilder events = new UIEventBuilder();
         commands.set("#StatusMessage.Text", message);
         commands.set("#StatusMessage.Style.TextColor", COLOR_SUCCESS);
         sendUpdate(commands, events, false);
-    }
-
-    /**
-     * Set status message in a UICommandBuilder (for batch updates).
-     * Does NOT schedule auto-reset - caller must handle that separately if needed.
-     */
-    private void setStatusInCommands(UICommandBuilder commands, String message, String color) {
-        commands.set("#StatusMessage.Text", message);
-        commands.set("#StatusMessage.Style.TextColor", color);
+        scheduleStatusReset();
     }
 
     /**
@@ -233,21 +210,13 @@ public class TradingPage extends InteractiveCustomUIPage<TradingPage.TradingPage
         }
     }
 
-    // Expose color constants for external use
-    public static String getColorNormal() { return COLOR_NORMAL; }
-    public static String getColorWarning() { return COLOR_WARNING; }
-    public static String getColorError() { return COLOR_ERROR; }
-    public static String getColorSuccess() { return COLOR_SUCCESS; }
-
     @Override
     public void build(@Nonnull Ref<EntityStore> entityRef,
                       @Nonnull UICommandBuilder commands,
                       @Nonnull UIEventBuilder events,
                       @Nonnull Store<EntityStore> store) {
-        //LOGGER.atInfo().log("build() called");
-
         // Load the UI template
-        commands.append(PAGE_LAYOUT);
+        commands.append(TradeConstants.TRADING_PAGE_LAYOUT);
 
         // Bind button events
         events.addEventBinding(
@@ -274,7 +243,8 @@ public class TradingPage extends InteractiveCustomUIPage<TradingPage.TradingPage
         // Get trade session
         Optional<TradeSession> optSession = tradeManager.getSession(playerRef);
         if (optSession.isEmpty()) {
-            commands.set("#StatusMessage.Text", "No active trade session");
+            commands.set("#StatusMessage.Text", TradeMessages.uiNoActiveSession());
+            commands.set("#StatusMessage.Style.TextColor", TradeConstants.COLOR_ERROR);
             commands.set("#DebugInfo.Text", "Use /trade test to start");
             return;
         }
@@ -283,9 +253,9 @@ public class TradingPage extends InteractiveCustomUIPage<TradingPage.TradingPage
 
         // Set partner name
         PlayerRef partner = session.getOtherPlayer(playerRef);
-        String partnerName = session.isTestMode() ? "Test Partner (You)" :
-                (partner != null ? partner.getUsername() : "Unknown");
-        commands.set("#PartnerName.Text", "Trading with: " + partnerName);
+        String partnerName = session.isTestMode() ? TradeMessages.uiLabelTestPartner() :
+                (partner != null ? partner.getUsername() : TradeMessages.uiLabelUnknown());
+        commands.set("#PartnerName.Text", TradeMessages.uiLabelTradingWith() + " " + partnerName);
 
         // Initialize consolidated inventory
         initializeConsolidatedInventory(store, entityRef);
@@ -299,6 +269,14 @@ public class TradingPage extends InteractiveCustomUIPage<TradingPage.TradingPage
         buildMyOfferSlots(commands, events, session);
         buildPartnerOfferSlots(commands, session);
 
+        // Translate UI Constants
+        translateUIConstants(commands);
+
+        // Hide debug info if debug mode is OFF
+        if (!isDebug()) {
+            commands.set("#DebugInfo.Visible", false);
+        }
+
         // Update status
         updateStatusUI(commands, session);
 
@@ -306,36 +284,48 @@ public class TradingPage extends InteractiveCustomUIPage<TradingPage.TradingPage
         tradeManager.registerTradingPage(playerRef, this::onInventoryChangedEvent, entityRef, this::setStatus, this);
     }
 
+    private void translateUIConstants(UICommandBuilder commands){
+        commands.set("#TitleLabel.Text", TradeMessages.uiTitleTrade());
+        commands.set("#YourOfferLabel.Text", TradeMessages.uiLabelYourOffer());
+        commands.set("#PartnerOfferLabel.Text", TradeMessages.uiLabelPartnerOffer());
+        commands.set("#YourInventoryLabel.Text", TradeMessages.uiLabelYourInventory());
+        commands.set("#YourStatusLabel.Text", TradeMessages.uiLabelYourStatus());
+        commands.set("#PartnerStatusLabel.Text", TradeMessages.uiLabelPartnerStatus());
+        commands.set("#AcceptButton.Text", TradeMessages.uiButtonAccept());
+        commands.set("#ConfirmButton.Text", TradeMessages.uiButtonConfirm());
+        commands.set("#CancelButton.Text", TradeMessages.uiButtonCancel());
+    }
+
     /**
      * Called when player's inventory changes (from event listener)
      * This runs on the correct thread since it's triggered by the event system
      */
     private void onInventoryChangedEvent() {
-        //LOGGER.atInfo().log("=== onInventoryChangedEvent START ===");
-        //LOGGER.atInfo().log("PlayerRef UUID: " + playerRef.getUuid());
-
-        // Get session info before checking changes
-        Optional<TradeSession> preCheckSession = tradeManager.getSession(playerRef);
-        if (preCheckSession.isPresent()) {
-            TradeSession s = preCheckSession.get();
-            //LOGGER.atInfo().log("Session state BEFORE check: " + s.getState());
-            //LOGGER.atInfo().log("Has accepted BEFORE check: " + s.hasAccepted(playerRef));
-        } else {
-            //LOGGER.atInfo().log("No session found BEFORE check!");
+        // Check if a close was requested (e.g., from disconnect handler on wrong thread)
+        if (closeRequested) {
+            this.close();
+            return;
         }
-
-        // Check and handle inventory changes
-        checkAndHandleInventoryChanges(store, entityRef);
 
         // Refresh the UI
         Optional<TradeSession> optSession = tradeManager.getSession(playerRef);
         if (optSession.isEmpty()) {
-            //LOGGER.atInfo().log("No session found AFTER check, returning");
+            // Session no longer exists - partner disconnected or trade ended
+            this.close();
             return;
         }
         TradeSession session = optSession.get();
-        //LOGGER.atInfo().log("Session state AFTER check: " + session.getState());
-        //LOGGER.atInfo().log("Has accepted AFTER check: " + session.hasAccepted(playerRef));
+
+        // Also close if trade is in a terminal state
+        if (session.getState() == TradeState.CANCELLED ||
+            session.getState() == TradeState.COMPLETED ||
+            session.getState() == TradeState.FAILED) {
+            this.close();
+            return;
+        }
+
+        // Check and handle inventory changes
+        checkAndHandleInventoryChanges(store, entityRef);
 
         // Re-initialize inventory
         initializeConsolidatedInventory(store, entityRef);
@@ -365,9 +355,9 @@ public class TradingPage extends InteractiveCustomUIPage<TradingPage.TradingPage
             boolean iAmInitiator = playerRef.getUuid().equals(session.getInitiator().getUuid());
             boolean myAccepted = iAmInitiator ? session.isInitiatorAccepted() : session.isTargetAccepted();
             boolean partnerAccepted = iAmInitiator ? session.isTargetAccepted() : session.isInitiatorAccepted();
-            commands.set("#MyAcceptStatus.Text", myAccepted ? "ACCEPTED" : "Not accepted");
+            commands.set("#MyAcceptStatus.Text", myAccepted ? TradeMessages.uiStatusAccepted() : TradeMessages.uiStatusNotAccepted());
             commands.set("#MyAcceptStatus.Style.TextColor", myAccepted ? COLOR_SUCCESS : COLOR_ERROR);
-            commands.set("#PartnerAcceptStatus.Text", partnerAccepted ? "ACCEPTED" : "Not accepted");
+            commands.set("#PartnerAcceptStatus.Text", partnerAccepted ? TradeMessages.uiStatusAccepted() : TradeMessages.uiStatusNotAccepted());
             commands.set("#PartnerAcceptStatus.Style.TextColor", partnerAccepted ? COLOR_SUCCESS : COLOR_ERROR);
 
         }
@@ -415,14 +405,13 @@ public class TradingPage extends InteractiveCustomUIPage<TradingPage.TradingPage
                             ConsolidatedItem consolidated = consolidatedInventory.get(itemId);
                             if (consolidated != null) {
                                 consolidated.offeredQuantity += offeredQty;
-                                //LOGGER.atInfo().log("Already offered: " + itemId + " x" + offeredQty);
                             }
                         }
                     }
                 }
             }
         } catch (Exception e) {
-            //LOGGER.atWarning().withCause(e).log("Failed to initialize consolidated inventory");
+            LOGGER.atWarning().withCause(e).log("Failed to initialize consolidated inventory");
         }
     }
 
@@ -490,7 +479,7 @@ public class TradingPage extends InteractiveCustomUIPage<TradingPage.TradingPage
             processContainerForSnapshot(inventory.getBackpack(), snapshot);
             processContainerForSnapshot(inventory.getStorage(), snapshot);
         } catch (Exception e) {
-            //LOGGER.atWarning().withCause(e).log("Failed to get inventory snapshot");
+            LOGGER.atWarning().withCause(e).log("Failed to get inventory snapshot");
         }
         return snapshot;
     }
@@ -525,12 +514,118 @@ public class TradingPage extends InteractiveCustomUIPage<TradingPage.TradingPage
             int availableQty = currentInventory.getOrDefault(itemId, 0);
 
             if (availableQty < offeredQty) {
-                //LOGGER.atWarning().log("Offer validation failed: " + itemId +
-                //" offered=" + offeredQty + " available=" + availableQty);
+                LOGGER.atWarning().log("Offer validation failed: " + itemId +
+                " offered=" + offeredQty + " available=" + availableQty);
                 return false;
             }
         }
         return true;
+    }
+
+    /**
+     * Validate that the player has enough inventory space to receive partner's items.
+     * Intelligently checks if items can stack with existing items.
+     * @return true if player has enough space, false otherwise
+     */
+    private boolean validateInventorySpace(TradeSession session) {
+        try {
+            Player player = store.getComponent(entityRef, Player.getComponentType());
+            if (player == null) return false;
+
+            Inventory inventory = player.getInventory();
+
+            // Get partner's offer
+            PlayerRef partner = session.getOtherPlayer(playerRef);
+            TradeOffer partnerOffer = session.getOfferFor(partner);
+
+            if (partnerOffer == null || partnerOffer.getItems().isEmpty()) {
+                return true; // No items to receive, so space is fine
+            }
+
+            // Count total empty slots
+            int totalEmptySlots = 0;
+            ItemContainer hotbar = inventory.getHotbar();
+            ItemContainer backpack = inventory.getBackpack();
+            ItemContainer storage = inventory.getStorage();
+
+            if (hotbar != null) totalEmptySlots += InventoryHelper.countEmptySlots(hotbar);
+            if (backpack != null) totalEmptySlots += InventoryHelper.countEmptySlots(backpack);
+            if (storage != null) totalEmptySlots += InventoryHelper.countEmptySlots(storage);
+
+            // Build a map of current inventory: itemId -> total quantity and available stack space
+            Map<String, ItemStackInfo> currentInventory = new HashMap<>();
+
+            for (ItemContainer container : new ItemContainer[]{hotbar, backpack, storage}) {
+                if (container == null) continue;
+
+                for (int i = 0; i < container.getCapacity(); i++) {
+                    ItemStack stack = container.getItemStack((short) i);
+                    if (stack == null || stack.isEmpty()) continue;
+
+                    String itemId = stack.getItem().getId();
+                    int quantity = stack.getQuantity();
+                    int maxStackTemp = stack.getItem().getMaxStack();
+                    final int maxStack = maxStackTemp > 0 ? maxStackTemp : DEFAULT_MAX_STACK;
+
+                    ItemStackInfo info = currentInventory.computeIfAbsent(itemId,
+                        k -> new ItemStackInfo(maxStack));
+                    info.currentQuantity += quantity;
+                    info.availableSpace += (maxStack - quantity);
+                }
+            }
+
+            // Calculate how many new slots are needed for partner's items
+            int newSlotsNeeded = 0;
+
+            for (ItemStack offeredStack : partnerOffer.getItems()) {
+                if (offeredStack == null || offeredStack.isEmpty()) continue;
+
+                String itemId = offeredStack.getItem().getId();
+                int offeredQuantity = offeredStack.getQuantity();
+                int maxStack = offeredStack.getItem().getMaxStack();
+                if (maxStack <= 0) maxStack = DEFAULT_MAX_STACK;
+
+                ItemStackInfo info = currentInventory.get(itemId);
+
+                if (info != null && info.availableSpace > 0) {
+                    // We have existing stacks with available space
+                    int canFitInExisting = Math.min(offeredQuantity, info.availableSpace);
+                    int remaining = offeredQuantity - canFitInExisting;
+
+                    if (remaining > 0) {
+                        // Need new slots for the remaining items
+                        newSlotsNeeded += (int) Math.ceil((double) remaining / maxStack);
+                    }
+                    // else: all items fit in existing stacks, no new slots needed
+                } else {
+                    // No existing stacks or they're all full - need new slots
+                    newSlotsNeeded += (int) Math.ceil((double) offeredQuantity / maxStack);
+                }
+            }
+
+            Common.logDebug(LOGGER, "Smart space check: empty=" + totalEmptySlots +
+                " needed=" + newSlotsNeeded);
+
+            return totalEmptySlots >= newSlotsNeeded;
+        } catch (Exception e) {
+            LOGGER.atWarning().withCause(e).log("Error validating inventory space");
+            return false;
+        }
+    }
+
+    /**
+     * Helper class to track inventory stack information for space calculation.
+     */
+    private static class ItemStackInfo {
+        int maxStackSize;
+        int currentQuantity;
+        int availableSpace;
+
+        ItemStackInfo(int maxStackSize) {
+            this.maxStackSize = maxStackSize;
+            this.currentQuantity = 0;
+            this.availableSpace = 0;
+        }
     }
 
     /**
@@ -546,18 +641,15 @@ public class TradingPage extends InteractiveCustomUIPage<TradingPage.TradingPage
             TradeState currentState = checkSession.get().getState();
             if (currentState == TradeState.EXECUTING || currentState == TradeState.COMPLETED ||
                 currentState == TradeState.FAILED || currentState == TradeState.CANCELLED) {
-                LOGGER.atInfo().log("Skipping inventory change handling - trade state: " + currentState);
+                Common.logDebug(LOGGER, "Skipping inventory change handling - trade state: " + currentState);
                 return;
             }
         }
 
         Map<String, Integer> currentSnapshot = getCurrentInventorySnapshot(store, entityRef);
-        //LOGGER.atInfo().log("Current snapshot size: " + currentSnapshot.size());
-        //LOGGER.atInfo().log("Previous snapshot size: " + previousInventorySnapshot.size());
 
         // First time - just save snapshot
         if (previousInventorySnapshot.isEmpty()) {
-            //LOGGER.atInfo().log("Previous snapshot was empty - saving current and returning");
             previousInventorySnapshot.putAll(currentSnapshot);
             return;
         }
@@ -572,12 +664,12 @@ public class TradingPage extends InteractiveCustomUIPage<TradingPage.TradingPage
             int prevQty = prev.getValue();
             int currentQty = currentSnapshot.getOrDefault(itemId, 0);
 
-            LOGGER.atInfo().log("Comparing " + itemId + ": prev=" + prevQty + " current=" + currentQty);
+            Common.logDebug(LOGGER, "Comparing " + itemId + ": prev=" + prevQty + " current=" + currentQty);
 
             if (currentQty < prevQty) {
                 hasChanges = true;
                 decreasedItems.put(itemId, prevQty - currentQty);
-                LOGGER.atInfo().log("DETECTED DECREASE: " + itemId + " from " + prevQty + " to " + currentQty);
+                Common.logDebug(LOGGER, "DETECTED DECREASE: " + itemId + " from " + prevQty + " to " + currentQty);
             }
         }
 
@@ -586,51 +678,43 @@ public class TradingPage extends InteractiveCustomUIPage<TradingPage.TradingPage
             String itemId = curr.getKey();
             if (!previousInventorySnapshot.containsKey(itemId)) {
                 hasChanges = true;
-                //LOGGER.atInfo().log("DETECTED NEW ITEM: " + itemId + " x" + curr.getValue());
             } else if (curr.getValue() > previousInventorySnapshot.get(itemId)) {
                 hasChanges = true;
-                //LOGGER.atInfo().log("DETECTED INCREASE: " + itemId + " to " + curr.getValue());
             }
         }
 
-        //LOGGER.atInfo().log("hasChanges = " + hasChanges);
-        //LOGGER.atInfo().log("decreasedItems = " + decreasedItems);
-
         if (hasChanges) {
             Optional<TradeSession> optSession = tradeManager.getSession(playerRef);
-            //LOGGER.atInfo().log("Session present: " + optSession.isPresent());
 
             if (optSession.isPresent()) {
                 TradeSession session = optSession.get();
                 boolean hasAccepted = session.hasAccepted(playerRef);
-                //LOGGER.atInfo().log("Player has accepted: " + hasAccepted);
 
                 // Auto-unaccept if player had accepted
                 if (hasAccepted) {
                     boolean revoked = tradeManager.revokeAccept(playerRef);
-                    setStatusWarning(playerRef.getUsername() + "'s inventory has been modified");
+                    setStatusWarning(TradeMessages.uiAcceptRevoked());
                 }
 
                 // Remove items from offer if they're no longer available
                 TradeOffer myOffer = session.getOfferFor(playerRef);
-                LOGGER.atInfo().log("My offer: " + (myOffer != null ? myOffer.getItems().size() + " items" : "null"));
-                LOGGER.atInfo().log("decreasedItems: " + decreasedItems);
+                Common.logDebug(LOGGER, "My offer: " + (myOffer != null ? myOffer.getItems().size() + " items" : "null"));
+                Common.logDebug(LOGGER, "decreasedItems: " + decreasedItems);
 
                 if (myOffer != null && !decreasedItems.isEmpty()) {
-                    LOGGER.atInfo().log("Calling handleDecreasedItemsInOffer...");
+                    Common.logDebug(LOGGER, "Calling handleDecreasedItemsInOffer...");
                     handleDecreasedItemsInOffer(myOffer, decreasedItems, currentSnapshot, session);
                 } else {
-                    LOGGER.atInfo().log("NOT calling handleDecreasedItemsInOffer - myOffer=" + myOffer + " decreasedItems.isEmpty=" + decreasedItems.isEmpty());
+                    Common.logDebug(LOGGER, "NOT calling handleDecreasedItemsInOffer - myOffer=" + myOffer + " decreasedItems.isEmpty=" + decreasedItems.isEmpty());
                 }
             }
         } else {
-            LOGGER.atInfo().log("No changes detected - snapshots appear identical");
+            Common.logDebug(LOGGER, "No changes detected - snapshots appear identical");
         }
 
         // Update snapshot
         previousInventorySnapshot.clear();
         previousInventorySnapshot.putAll(currentSnapshot);
-        //LOGGER.atInfo().log("=== checkAndHandleInventoryChanges END ===");
     }
 
     /**
@@ -638,12 +722,12 @@ public class TradingPage extends InteractiveCustomUIPage<TradingPage.TradingPage
      */
     private void handleDecreasedItemsInOffer(TradeOffer myOffer, Map<String, Integer> decreasedItems,
                                               Map<String, Integer> currentInventory, TradeSession session) {
-        LOGGER.atInfo().log("handleDecreasedItemsInOffer called - decreasedItems: " + decreasedItems);
-        LOGGER.atInfo().log("currentInventory: " + currentInventory);
-        LOGGER.atInfo().log("Offer locked: " + myOffer.isLocked());
+        Common.logDebug(LOGGER, "handleDecreasedItemsInOffer called - decreasedItems: " + decreasedItems);
+        Common.logDebug(LOGGER, "currentInventory: " + currentInventory);
+        Common.logDebug(LOGGER, "Offer locked: " + myOffer.isLocked());
 
         List<ItemStack> offerItems = myOffer.getItems();
-        LOGGER.atInfo().log("Offer items count: " + offerItems.size());
+        Common.logDebug(LOGGER, "Offer items count: " + offerItems.size());
         boolean offerChanged = false;
 
         for (int i = offerItems.size() - 1; i >= 0; i--) {
@@ -654,30 +738,30 @@ public class TradingPage extends InteractiveCustomUIPage<TradingPage.TradingPage
             int offeredQty = offerItem.getQuantity();
             int availableQty = currentInventory.getOrDefault(itemId, 0);
 
-            LOGGER.atInfo().log("Checking offer item: " + itemId + " offered=" + offeredQty + " available=" + availableQty);
+            Common.logDebug(LOGGER, "Checking offer item: " + itemId + " offered=" + offeredQty + " available=" + availableQty);
 
             if (availableQty < offeredQty) {
                 // Need to reduce or remove from offer
                 if (availableQty <= 0) {
                     // Remove entirely
                     ItemStack removed = myOffer.removeItem(i);
-                    LOGGER.atInfo().log("Removed item from offer: " + (removed != null ? "success" : "FAILED"));
-                    setStatusWarning("Removed " + itemId + " from offer");
+                    Common.logDebug(LOGGER, "Removed item from offer: " + (removed != null ? "success" : "FAILED"));
+                    setStatusWarning(TradeMessages.actionRemovedFromOffer(itemId));
                 } else {
                     // Reduce quantity
                     boolean success = myOffer.setItemQuantity(i, availableQty);
-                    LOGGER.atInfo().log("Set item quantity to " + availableQty + ": " + (success ? "success" : "FAILED"));
-                    setStatusWarning("Reduced " + itemId + " to " + availableQty);
+                    Common.logDebug(LOGGER, "Set item quantity to " + availableQty + ": " + (success ? "success" : "FAILED"));
+                    setStatusWarning(TradeMessages.actionReducedInOffer(itemId, availableQty));
                 }
                 offerChanged = true;
             }
         }
 
         if (offerChanged) {
-            LOGGER.atInfo().log("Offer changed, notifying tradeManager");
+            Common.logDebug(LOGGER, "Offer changed, notifying tradeManager");
             tradeManager.onOfferChanged(playerRef);
         } else {
-            LOGGER.atInfo().log("No offer changes needed");
+            Common.logDebug(LOGGER, "No offer changes needed");
         }
     }
 
@@ -733,8 +817,6 @@ public class TradingPage extends InteractiveCustomUIPage<TradingPage.TradingPage
                 false
             );
 
-             //LOGGER.atInfo().log("Built inventory slot " + index + " (row " + currentRowNum +
-            //", slot " + slotInRow + "): " + item.itemId + " x" + item.getAvailable() + "]");
             index++;
         }
     }
@@ -756,7 +838,7 @@ public class TradingPage extends InteractiveCustomUIPage<TradingPage.TradingPage
 
         int index = 0;
         int currentRowNum = -1;
-        int slotsPerOfferRow = 4; // Wider container fits ~4 slots
+        int slotsPerOfferRow = SLOTS_PER_OFFER_ROW; // Wider container fits ~4 slots
 
         for (Map.Entry<String, Integer> entry : myOfferItems.entrySet()) {
             String itemId = entry.getKey();
@@ -808,7 +890,6 @@ public class TradingPage extends InteractiveCustomUIPage<TradingPage.TradingPage
                 false
             );
 
-            // //LOGGER.atInfo().log("Built my offer slot " + index + ": " + itemId + " x" + quantity + "]");
             index++;
         }
     }
@@ -831,7 +912,7 @@ public class TradingPage extends InteractiveCustomUIPage<TradingPage.TradingPage
 
         int index = 0;
         int currentRowNum = -1;
-        int slotsPerOfferRow = 5; // Partner slots are smaller (80px), fit ~5 per row
+        int slotsPerOfferRow = SLOTS_PER_PARTNER_ROW; // Partner slots are smaller (80px), fit ~5 per row
 
         for (Map.Entry<String, Integer> entry : partnerItems.entrySet()) {
             String itemId = entry.getKey();
@@ -856,7 +937,6 @@ public class TradingPage extends InteractiveCustomUIPage<TradingPage.TradingPage
             commands.set(slotSelector + " #SlotItem.Visible", true);
             commands.set(slotSelector + " #SlotQty.Text", "x" + quantity);
 
-            // //LOGGER.atInfo().log("Built partner slot " + index + ": " + itemId + " x" + quantity + "]");
             index++;
         }
     }
@@ -867,8 +947,22 @@ public class TradingPage extends InteractiveCustomUIPage<TradingPage.TradingPage
                                 @Nonnull TradingPageData data) {
         super.handleDataEvent(entityRef, store, data);
 
+        // Check if session is still valid, close UI if not
+        Optional<TradeSession> optSession = tradeManager.getSession(playerRef);
+        if (optSession.isEmpty() || closeRequested) {
+            this.close();
+            return;
+        }
+
+        TradeSession session = optSession.get();
+        if (session.getState() == TradeState.CANCELLED ||
+            session.getState() == TradeState.COMPLETED ||
+            session.getState() == TradeState.FAILED) {
+            this.close();
+            return;
+        }
+
         String action = data.getAction();
-        //LOGGER.atInfo().log("handleDataEvent - action: " + action);
 
         if (action == null || action.isEmpty()) {
             return;
@@ -903,7 +997,7 @@ public class TradingPage extends InteractiveCustomUIPage<TradingPage.TradingPage
                 handleCancel();
                 break;
             default:
-                //LOGGER.atWarning().log("Unknown action: " + action);
+                LOGGER.atWarning().log("Unknown action: " + action);
         }
     }
 
@@ -912,7 +1006,7 @@ public class TradingPage extends InteractiveCustomUIPage<TradingPage.TradingPage
         String remainder = action.substring(ACTION_INV_PREFIX.length());
         int lastUnderscore = remainder.lastIndexOf('_');
         if (lastUnderscore == -1) {
-            //LOGGER.atWarning().log("Invalid inventory action format: " + action);
+            LOGGER.atWarning().log("Invalid inventory action format: " + action);
             return;
         }
 
@@ -924,7 +1018,7 @@ public class TradingPage extends InteractiveCustomUIPage<TradingPage.TradingPage
 
         ConsolidatedItem item = consolidatedInventory.get(itemId);
         if (item == null) {
-            //LOGGER.atWarning().log("Item not found in inventory: " + itemId);
+            LOGGER.atWarning().log("Item not found in inventory: " + itemId);
             return;
         }
 
@@ -936,7 +1030,7 @@ public class TradingPage extends InteractiveCustomUIPage<TradingPage.TradingPage
             try {
                 amount = Integer.parseInt(amountStr);
             } catch (NumberFormatException e) {
-                //LOGGER.atWarning().log("Invalid amount: " + amountStr);
+                LOGGER.atWarning().log("Invalid amount: " + amountStr);
                 return;
             }
         }
@@ -950,7 +1044,7 @@ public class TradingPage extends InteractiveCustomUIPage<TradingPage.TradingPage
         String remainder = action.substring(ACTION_OFFER_PREFIX.length());
         int lastUnderscore = remainder.lastIndexOf('_');
         if (lastUnderscore == -1) {
-            //LOGGER.atWarning().log("Invalid offer action format: " + action);
+            LOGGER.atWarning().log("Invalid offer action format: " + action);
             return;
         }
 
@@ -971,7 +1065,7 @@ public class TradingPage extends InteractiveCustomUIPage<TradingPage.TradingPage
             try {
                 amount = Integer.parseInt(amountStr);
             } catch (NumberFormatException e) {
-                //LOGGER.atWarning().log("Invalid amount: " + amountStr);
+                LOGGER.atWarning().log("Invalid amount: " + amountStr);
                 return;
             }
         }
@@ -987,7 +1081,7 @@ public class TradingPage extends InteractiveCustomUIPage<TradingPage.TradingPage
     private boolean transferToOffer(String itemId, int requestedAmount, Store<EntityStore> store, Ref<EntityStore> entityRef) {
         Optional<TradeSession> optSession = tradeManager.getSession(playerRef);
         if (optSession.isEmpty()) {
-            setStatusError("No active trade session");
+            setStatusError(TradeMessages.uiNoActiveSession());
             return false;
         }
 
@@ -996,20 +1090,20 @@ public class TradingPage extends InteractiveCustomUIPage<TradingPage.TradingPage
         // Auto-unaccept both players if trying to modify while accepted
         if (session.getState() == TradeState.ONE_ACCEPTED || session.getState() == TradeState.BOTH_ACCEPTED_COUNTDOWN) {
             session.revokeAllAcceptances();
-            setStatusWarning("Acceptances revoked - offer modified");
+            setStatusWarning(TradeMessages.uiAcceptRevoked());
             // Notify partner via their trading page
-            tradeManager.notifyPartnerStatus(playerRef, "Partner modified their offer", COLOR_WARNING);
+            tradeManager.notifyPartnerStatus(playerRef, TradeMessages.uiPartnerModified(), COLOR_WARNING);
         }
 
         ConsolidatedItem item = consolidatedInventory.get(itemId);
         if (item == null) {
-            setStatusError("Item not found");
+            setStatusError(TradeMessages.uiItemNotFound());
             return false;
         }
 
         int available = item.getAvailable();
         if (available <= 0) {
-            setStatusWarning("No items available to offer");
+            setStatusWarning(TradeMessages.uiNoItemsAvailable());
             return false;
         }
 
@@ -1037,7 +1131,7 @@ public class TradingPage extends InteractiveCustomUIPage<TradingPage.TradingPage
             // Use the actual Item object to create a proper ItemStack
             ItemStack newItem = new ItemStack(item.itemId, actualAmount);
             if (!myOffer.addItem(newItem)) {
-                setStatusError("Failed to add item to offer");
+                setStatusError(TradeMessages.uiFailedToAdd());
                 return false;
             }
             createdNewSlot = true;
@@ -1048,7 +1142,7 @@ public class TradingPage extends InteractiveCustomUIPage<TradingPage.TradingPage
         tradeManager.onOfferChanged(playerRef);
 
         // Clear any previous error/warning - show normal status
-        setStatusNormal("Added x" + actualAmount + " to offer");
+        setStatusNormal(TradeMessages.actionAddedToOffer(actualAmount));
         return createdNewSlot;
     }
 
@@ -1059,7 +1153,7 @@ public class TradingPage extends InteractiveCustomUIPage<TradingPage.TradingPage
     private boolean returnFromOffer(String itemId, int requestedAmount, Store<EntityStore> store, Ref<EntityStore> entityRef) {
         Optional<TradeSession> optSession = tradeManager.getSession(playerRef);
         if (optSession.isEmpty()) {
-            setStatusError("No active trade session");
+            setStatusError(TradeMessages.uiNoActiveSession());
             return false;
         }
 
@@ -1068,9 +1162,9 @@ public class TradingPage extends InteractiveCustomUIPage<TradingPage.TradingPage
         // Auto-unaccept both players if trying to modify while accepted
         if (session.getState() == TradeState.ONE_ACCEPTED || session.getState() == TradeState.BOTH_ACCEPTED_COUNTDOWN) {
             session.revokeAllAcceptances();
-            setStatusWarning("Acceptances revoked - offer modified");
+            setStatusWarning(TradeMessages.uiAcceptRevoked());
             // Notify partner via their trading page
-            tradeManager.notifyPartnerStatus(playerRef, "Partner modified their offer", COLOR_WARNING);
+            tradeManager.notifyPartnerStatus(playerRef, TradeMessages.uiPartnerModified(), COLOR_WARNING);
         }
 
         TradeOffer myOffer = session.getOfferFor(playerRef);
@@ -1089,7 +1183,7 @@ public class TradingPage extends InteractiveCustomUIPage<TradingPage.TradingPage
         }
 
         if (offerSlot == -1) {
-            setStatusError("Item not found in offer");
+            setStatusError(TradeMessages.uiItemNotFound());
             return false;
         }
 
@@ -1111,14 +1205,14 @@ public class TradingPage extends InteractiveCustomUIPage<TradingPage.TradingPage
         }
 
         tradeManager.onOfferChanged(playerRef);
-        setStatusNormal("Returned x" + actualAmount + " from offer");
+        setStatusNormal(TradeMessages.actionReturnedFromOffer(actualAmount));
         return removedSlot;
     }
 
     private void handleAccept() {
         Optional<TradeSession> optSession = tradeManager.getSession(playerRef);
         if (optSession.isEmpty()) {
-            setStatusError("No active trade session");
+            setStatusError(TradeMessages.uiNoActiveSession());
             return;
         }
 
@@ -1126,25 +1220,31 @@ public class TradingPage extends InteractiveCustomUIPage<TradingPage.TradingPage
 
         if (session.hasAccepted(playerRef)) {
             if (tradeManager.revokeAccept(playerRef)) {
-                setStatusWarning("Acceptance revoked");
+                setStatusWarning(TradeMessages.uiAcceptRevokedManual());
                 stopCountdownTimer();
             }
         } else {
             // Validate inventory before accepting
             if (!validateOfferAgainstInventory(session)) {
-                setStatusError("Cannot accept - items no longer available");
+                setStatusError(TradeMessages.uiFailedValidation());
+                return;
+            }
+
+            // Validate inventory space
+            if (!validateInventorySpace(session)) {
+                setStatusError(TradeMessages.uiNotEnoughSpace());
                 return;
             }
 
             if (tradeManager.acceptTrade(playerRef)) {
                 if (session.getState() == TradeState.BOTH_ACCEPTED_COUNTDOWN) {
-                    setStatusSuccess("Both accepted! Wait for countdown");
+                    setStatusSuccess(TradeMessages.uiBothAccepted());
                     startCountdownTimer();
                 } else {
-                    setStatusNormal("Accepted! Waiting for partner...");
+                    setStatusNormal(TradeMessages.uiStatusAcceptedWaiting());
                 }
             } else {
-                setStatusError("Cannot accept in current state");
+                setStatusError(TradeMessages.uiCannotAcceptState());
             }
         }
     }
@@ -1152,27 +1252,27 @@ public class TradingPage extends InteractiveCustomUIPage<TradingPage.TradingPage
     private void handleConfirm(Ref<EntityStore> entityRef, Store<EntityStore> store) {
         Optional<TradeSession> optSession = tradeManager.getSession(playerRef);
         if (optSession.isEmpty()) {
-            setStatusError("No active trade session");
+            setStatusError(TradeMessages.uiNoActiveSession());
             return;
         }
 
         TradeSession session = optSession.get();
 
         if (session.getState() != TradeState.BOTH_ACCEPTED_COUNTDOWN) {
-            setStatusWarning("Both players must accept first");
+            setStatusWarning(TradeMessages.errorAcceptFirst().getAnsiMessage());
             return;
         }
 
         if (!session.isCountdownComplete()) {
             long remaining = session.getRemainingCountdownMs();
-            setStatusWarning("Wait " + (remaining / 1000) + " more seconds");
+            setStatusWarning(TradeMessages.uiWaitMoreSeconds(remaining / 1000));
             return;
         }
 
         TradeSession.TradeResult result = tradeManager.confirmTrade(playerRef, store, entityRef);
 
         if (result.success) {
-            setStatusSuccess("Trade completed successfully!");
+            setStatusSuccess(TradeMessages.uiTradeCompleted());
             this.close();
         } else {
             // Trade failed - show appropriate message based on who caused it
@@ -1209,7 +1309,7 @@ public class TradingPage extends InteractiveCustomUIPage<TradingPage.TradingPage
         if (tradeManager.cancelTrade(playerRef)) {
             this.close();
         } else {
-            setStatusError("Failed to cancel trade");
+            setStatusError(TradeMessages.cancelFailed().getAnsiMessage());
         }
     }
 
@@ -1251,9 +1351,9 @@ public class TradingPage extends InteractiveCustomUIPage<TradingPage.TradingPage
             boolean iAmInitiator = playerRef.getUuid().equals(session.getInitiator().getUuid());
             boolean myAccepted = iAmInitiator ? session.isInitiatorAccepted() : session.isTargetAccepted();
             boolean partnerAccepted = iAmInitiator ? session.isTargetAccepted() : session.isInitiatorAccepted();
-            commands.set("#MyAcceptStatus.Text", myAccepted ? "ACCEPTED" : "Not accepted");
+            commands.set("#MyAcceptStatus.Text", myAccepted ? TradeMessages.uiStatusAccepted() : TradeMessages.uiStatusNotAccepted());
             commands.set("#MyAcceptStatus.Style.TextColor", myAccepted ? COLOR_SUCCESS : COLOR_ERROR);
-            commands.set("#PartnerAcceptStatus.Text", partnerAccepted ? "ACCEPTED" : "Not accepted");
+            commands.set("#PartnerAcceptStatus.Text", partnerAccepted ? TradeMessages.uiStatusAccepted() : TradeMessages.uiStatusNotAccepted());
             commands.set("#PartnerAcceptStatus.Style.TextColor", partnerAccepted ? COLOR_SUCCESS : COLOR_ERROR);
         }
 
@@ -1266,9 +1366,11 @@ public class TradingPage extends InteractiveCustomUIPage<TradingPage.TradingPage
         boolean myAccepted = iAmInitiator ? session.isInitiatorAccepted() : session.isTargetAccepted();
         boolean partnerAccepted = iAmInitiator ? session.isTargetAccepted() : session.isInitiatorAccepted();
 
-        commands.set("#MyAcceptStatus.Text", myAccepted ? "ACCEPTED" : "Not accepted");
+        String acceptedText = TradeMessages.uiStatusAccepted();
+        String notAcceptedText = TradeMessages.uiStatusNotAccepted();
+        commands.set("#MyAcceptStatus.Text", myAccepted ? acceptedText : notAcceptedText);
         commands.set("#MyAcceptStatus.Style.TextColor", myAccepted ? COLOR_SUCCESS : COLOR_ERROR);
-        commands.set("#PartnerAcceptStatus.Text", partnerAccepted ? "ACCEPTED" : "Not accepted");
+        commands.set("#PartnerAcceptStatus.Text", partnerAccepted ? acceptedText : notAcceptedText);
         commands.set("#PartnerAcceptStatus.Style.TextColor", partnerAccepted ? COLOR_SUCCESS : COLOR_ERROR);
 
         String statusMsg;
@@ -1278,13 +1380,13 @@ public class TradingPage extends InteractiveCustomUIPage<TradingPage.TradingPage
 
         switch (state) {
             case NEGOTIATING:
-                statusMsg = "Click item = 1 stack, use +1/+10 buttons";
+                statusMsg = TradeMessages.uiClickInstructions();
                 statusColor = COLOR_NORMAL;
                 commands.set("#CountdownTimer.Text", "");
                 stopCountdownTimer();
                 break;
             case ONE_ACCEPTED:
-                statusMsg = myAccepted ? "Waiting for partner..." : "Partner accepted! Click ACCEPT";
+                statusMsg = myAccepted ? TradeMessages.uiWaitingForPartner() : TradeMessages.uiPartnerAccepted();
                 statusColor = myAccepted ? COLOR_NORMAL : COLOR_WARNING;
                 commands.set("#CountdownTimer.Text", "");
                 stopCountdownTimer();
@@ -1293,7 +1395,7 @@ public class TradingPage extends InteractiveCustomUIPage<TradingPage.TradingPage
                 long remaining = session.getRemainingCountdownMs();
                 long displaySeconds = (remaining + 999) / 1000;
                 if (remaining > 0) {
-                    statusMsg = "Both accepted! Confirm in " + displaySeconds + "s";
+                    statusMsg = TradeMessages.statusCountdown(displaySeconds).getAnsiMessage();
                     statusColor = COLOR_SUCCESS;
                     commands.set("#CountdownTimer.Text", displaySeconds + "s");
                     // Start countdown timer if not already running
@@ -1301,9 +1403,9 @@ public class TradingPage extends InteractiveCustomUIPage<TradingPage.TradingPage
                         startCountdownTimer();
                     }
                 } else {
-                    statusMsg = "Ready! Click CONFIRM to complete";
+                    statusMsg = TradeMessages.uiCountdownReady();
                     statusColor = COLOR_SUCCESS;
-                    commands.set("#CountdownTimer.Text", "READY");
+                    commands.set("#CountdownTimer.Text", TradeMessages.uiStatusReady());
                 }
                 break;
             default:
@@ -1341,12 +1443,17 @@ public class TradingPage extends InteractiveCustomUIPage<TradingPage.TradingPage
      * Updates the countdown display every 500ms while in BOTH_ACCEPTED_COUNTDOWN state.
      */
     private void startCountdownTimer() {
+        // Don't start if scheduler is shut down (UI is closing)
+        if (countdownScheduler.isShutdown() || countdownScheduler.isTerminated()) {
+            return;
+        }
+
         stopCountdownTimer(); // Cancel any existing timer
 
-        //LOGGER.atInfo().log("Starting countdown timer");
         lastCountdownValue = -1;
 
-        countdownUpdateTask = countdownScheduler.scheduleAtFixedRate(() -> {
+        try {
+            countdownUpdateTask = countdownScheduler.scheduleAtFixedRate(() -> {
             try {
                 Optional<TradeSession> optSession = tradeManager.getSession(playerRef);
                 if (optSession.isEmpty()) {
@@ -1379,16 +1486,24 @@ public class TradingPage extends InteractiveCustomUIPage<TradingPage.TradingPage
                     UICommandBuilder commands = new UICommandBuilder();
                     UIEventBuilder events = new UIEventBuilder();
 
+                    // Update countdown timer display
                     if (remaining > 0) {
                         commands.set("#CountdownTimer.Text", displaySeconds + "s");
-                        commands.set("#StatusMessage.Text", "Both accepted! Confirm in " + displaySeconds + "s");
                     } else {
-                        commands.set("#CountdownTimer.Text", "READY");
-                        commands.set("#StatusMessage.Text", "Ready! Click CONFIRM to complete");
+                        commands.set("#CountdownTimer.Text", TradeMessages.uiStatusReady());
+                    }
+
+                    // Only update status message if no temporary status is active
+                    // (allows "Both accepted!" message to display for 5 seconds)
+                    if (!isTemporaryStatusActive()) {
+                        if (remaining > 0) {
+                            commands.set("#StatusMessage.Text", TradeMessages.statusCountdown(displaySeconds).getAnsiMessage());
+                        } else {
+                            commands.set("#StatusMessage.Text", TradeMessages.uiCountdownReady());
+                        }
                     }
 
                     sendUpdate(commands, events, false);
-                    //LOGGER.atInfo().log("Countdown update: " + (remaining > 0 ? displaySeconds + "s" : "READY"));
 
                     // Stop timer after showing READY
                     if (remaining <= 0) {
@@ -1396,9 +1511,13 @@ public class TradingPage extends InteractiveCustomUIPage<TradingPage.TradingPage
                     }
                 }
             } catch (Exception e) {
-                //LOGGER.atWarning().withCause(e).log("Error updating countdown");
+                LOGGER.atWarning().withCause(e).log("Error updating countdown");
             }
-        }, 0, 500, TimeUnit.MILLISECONDS);
+        }, 0, COUNTDOWN_UPDATE_INTERVAL_MS, TimeUnit.MILLISECONDS);
+        } catch (RejectedExecutionException e) {
+            // Scheduler was shut down between the check and the schedule call
+            Common.logDebug(LOGGER, "Countdown task rejected - scheduler shut down");
+        }
     }
 
     /**
@@ -1406,7 +1525,6 @@ public class TradingPage extends InteractiveCustomUIPage<TradingPage.TradingPage
      */
     private void stopCountdownTimer() {
         if (countdownUpdateTask != null && !countdownUpdateTask.isDone()) {
-            //LOGGER.atInfo().log("Stopping countdown timer");
             countdownUpdateTask.cancel(false);
             countdownUpdateTask = null;
         }
@@ -1414,7 +1532,6 @@ public class TradingPage extends InteractiveCustomUIPage<TradingPage.TradingPage
 
     @Override
     public void onDismiss(@Nonnull Ref<EntityStore> ref, @Nonnull Store<EntityStore> store) {
-        //LOGGER.atInfo().log("TradingPage dismissed");
         // Stop countdown timer and status reset timer
         stopCountdownTimer();
         cancelStatusReset();
@@ -1429,42 +1546,5 @@ public class TradingPage extends InteractiveCustomUIPage<TradingPage.TradingPage
      */
     public void closeUI() {
         close();
-    }
-
-    /**
-     * Data class for UI events.
-     */
-    public static class TradingPageData {
-        public static final BuilderCodec<TradingPageData> CODEC;
-
-        static {
-            BuilderCodec<TradingPageData> codec;
-            try {
-                codec = BuilderCodec.builder(TradingPageData.class, TradingPageData::new)
-                        .addField(
-                                new KeyedCodec<>("Action", Codec.STRING),
-                                (data, value) -> data.action = value,
-                                data -> data.action
-                        )
-                        .build();
-            } catch (Exception e) {
-                codec = BuilderCodec.builder(TradingPageData.class, TradingPageData::new).build();
-                e.printStackTrace();
-            }
-            CODEC = codec;
-        }
-
-        public String action = "";
-
-        public TradingPageData() {
-        }
-
-        public String getAction() {
-            return action;
-        }
-
-        public void setAction(String action) {
-            this.action = action;
-        }
     }
 }
