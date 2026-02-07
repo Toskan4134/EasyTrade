@@ -87,7 +87,7 @@ trade.request.received=&eSolicitud de intercambio recibida de &f{initiator}&e. U
 trade.status.countdown=&a¡Ambos aceptaron! Completando en &f{seconds}s&a...
 ui.status.notEnoughSpace=No tienes suficiente espacio en el inventario
 ```
-> Puedes encontrar algunos ejemplos de messages.json [AQUÍ](github.com/Toskan4134/EasyTrade/tree/main/examples/messages)
+> Puedes encontrar algunos ejemplos de messages.json [AQUÍ](https://github.com/Toskan4134/EasyTrade/tree/main/examples/messages)
 
 ## Interfaz de Intercambio
 
